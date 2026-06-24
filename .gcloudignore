@@ -1,0 +1,12 @@
+# Keep the source upload to Cloud Build small and clean.
+.git/
+.gitignore
+.claude/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Project docs — not needed in the container image.
+CLAUDE.md
+design.md
