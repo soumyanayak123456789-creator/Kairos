@@ -7,6 +7,11 @@ __pycache__/
 .venv/
 venv/
 
+# Local secrets / tokens — must NEVER be uploaded or baked into the image.
+.env
+.env.example
+.tokens.json
+
 # Project docs — not needed in the container image.
 CLAUDE.md
 design.md
