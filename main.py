@@ -1,16 +1,18 @@
 """Clutch — FastAPI app.
 
-Build step 3: Firestore as the persistent state store.
+Through build step 6: OAuth login, Firestore persistence, the read path
+(get_schedule_snapshot), the Gemini function-calling agent loop, and LANE A
+execution (reversible calendar/Firestore writes) with an action log + undo.
 
-Direct Google OAuth 2.0 (design.md §5) with BOTH the in-flight OAuth verifier
-and the durable user tokens now stored in Firestore (was in-memory + a local
-JSON file). This makes the /login -> /oauth2callback handshake survive across
-multiple Cloud Run instances, and makes tokens survive restarts/cold starts.
+Auth: direct Google OAuth 2.0 (design.md §5); the OAuth verifier and durable
+user tokens live in Firestore. Firestore AND Vertex AI (Gemini) use Application
+Default Credentials (no service-account key file, no Gemini API key) — Gemini is
+called via Vertex AI so it bills the GCP project. Calendar tokens auto-refresh
+and are written back.
 
-Firestore uses Application Default Credentials (no service-account key file).
-
-Scope of THIS step: Firestore setup + moving verifier/token storage into it.
-No Gemini agent loop or calendar-reading logic yet.
+Risk lanes (design.md §3): Lane A (create/reschedule events, task writes) is
+executed automatically and logged for undo. Lane B (draft_message) is proposed
+only — confirm-first flow comes in a later step.
 
 --------------------------------------------------------------------------------
 Firestore data model (Native mode)
@@ -19,30 +21,27 @@ Collection `oauth_states`  — ephemeral OAuth handshake state (one-time use)
   Document {state}                 # the OAuth `state` string Google echoes back
     code_verifier : str            # PKCE verifier generated during /login
     created_at    : timestamp      # server time; enables an optional TTL policy
-  Deleted immediately after the token exchange. (Configure a Firestore TTL
-  policy on `created_at` to also sweep abandoned handshakes — optional.)
+  Deleted immediately after the token exchange.
 
 Collection `users`         — durable per-user data, keyed by Google account id
   Document {sub}                   # Google `sub` = stable, never-reused user id
-    email         : str
-    name          : str
-    token         : str            # current OAuth access token
-    refresh_token : str            # durable refresh token (the §5 requirement)
-    token_uri     : str
-    client_id     : str
-    client_secret : str
-    scopes        : [str]
-    updated_at    : timestamp
-    # Placeholders for later steps (NOT created yet; Firestore makes collections
-    # lazily). Planned subcollections under each user document:
-    #   tasks/{taskId}     subtasks: title, effort, status, parent_goal, due, ...
-    #   plan/{planId}      plan ledger: what was scheduled, why, outcome
-    #   actions/{actionId} action log for undo / receipts
+    email, name                    # identity
+    token, refresh_token,          # OAuth creds (refresh_token = §5 requirement)
+    token_uri, client_id,
+    client_secret, scopes, expiry, updated_at
+  Subcollections:
+    tasks/{taskId}       subtasks: title, effort, status, parent_goal, due,
+                         priority, created_at/updated_at
+    action_log/{id}      undo + receipts: action, args, result, undo (reversal
+                         info), undone, created_at
+    # plan/{planId}      plan ledger (planned; not built yet)
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -106,6 +105,12 @@ if REDIRECT_URI.startswith("http://"):
 # Firestore collection names.
 OAUTH_STATES = "oauth_states"
 USERS = "users"
+TASKS = "tasks"            # subcollection under users/{sub}
+ACTION_LOG = "action_log"  # subcollection under users/{sub}: undo + receipts
+
+# Marker stamped on agent-created calendar events (extendedProperties.private)
+# so they're distinguishable from the user's own events for undo + the UI.
+CLUTCH_MARKER = "clutch"
 
 # Cookie holding the opaque user id (Google `sub`) so /me knows which user's
 # tokens to read from Firestore. It is NOT a credential — the tokens stay
@@ -113,16 +118,44 @@ USERS = "users"
 UID_COOKIE = "clutch_uid"
 
 # --- Gemini agent config (model names change often — edit them HERE) ----------
+# Gemini is called via VERTEX AI (bills against the GCP project's credit) using
+# Application Default Credentials — NOT an AI Studio API key. The model IDs are
+# the same on Vertex; the SDK routes them to publishers/google/models/<id>.
 # Primary = fast/cheap current Flash; fallback = a DIFFERENT Gemini model used
 # only on the primary's rate-limit (429) or timeout. Both kept all-Google.
 PRIMARY_MODEL = "gemini-2.5-flash"
 FALLBACK_MODEL = "gemini-2.5-flash-lite"
 GEMINI_TIMEOUT_MS = 30_000          # per-call timeout; a timeout triggers fallback
-AGENT_STEP_CAP = 8                  # max Gemini turns per run; never loop forever
+# Vertex region. Default "global" for broadest model availability + lower error
+# rates; override via env (e.g. VERTEX_LOCATION=asia-south1) once confirmed.
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global")
+# A multi-block plan costs ~2 calls/subtask (create_calendar_event + upsert_task),
+# often one call per turn — 8 turns couldn't finish. AGENT_MAX_ACTIONS is the real
+# runaway guard; the step cap just bounds turns/loops.
+AGENT_STEP_CAP = 16                 # max Gemini turns per run; never loop forever
+AGENT_MAX_ACTIONS = 10              # hard cap on total executed writes per run
+MAX_EVENTS_PER_RUN = 8             # hard cap on create_calendar_event per run; HALTS the run
 
-# Tool names the agent is ALLOWED to actually execute in this build. Everything
-# else (calendar/Firestore writes, drafts) is captured as a proposal only.
-EXECUTABLE_TOOLS = {"get_schedule_snapshot"}
+# Lane A (design.md §3): reversible actions on the user's OWN surface — executed
+# automatically. Lane B: outbound/irreversible — proposed only (confirm later).
+# get_schedule_snapshot is read-only; notify_user just surfaces a message.
+LANE_A_TOOLS = {
+    "create_calendar_event",
+    "reschedule_event",
+    "upsert_task",
+    "reprioritize",
+    "break_down_task",
+}
+LANE_B_PROPOSE = {"draft_message"}
+
+# --- Scheduling policy (working hours + block length) ------------------------
+# Defaults in ONE place; per-user overrides live in Firestore (users/{sub}.prefs)
+# and are editable via /prefs. Enforced deterministically in the executor.
+WORK_TZ = "Asia/Kolkata"     # user's local timezone (IST for now)
+WORK_START_HOUR = 8          # earliest a focus block may START (local)
+WORK_END_HOUR = 22           # latest a focus block may END (local)
+MAX_BLOCK_MINUTES = 120      # cap a single focus block at ~2h; split longer work
+MIN_BLOCK_MINUTES = 30       # reject a clamped block shorter than this
 
 app = FastAPI(title="Clutch", description="The Last-Minute Life Saver")
 
@@ -399,13 +432,28 @@ def me(request: Request):
     }
 
 
-def build_snapshot(sub: str, data: dict, hours: int) -> dict:
+def _jsonify(obj):
+    """Recursively convert Firestore datetimes to ISO strings (JSON / proto safe)."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _jsonify(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_jsonify(v) for v in obj]
+    return obj
+
+
+def build_snapshot(
+    sub: str, data: dict, hours: int, session: AuthorizedSession | None = None
+) -> dict:
     """get_schedule_snapshot: perceive calendar (events + free/busy) + tasks.
 
-    Read-only. Returns calendar/task data only — never token values.
+    Read-only. Returns calendar/task data only — never token values. An existing
+    refreshed `session` may be passed in to avoid re-refreshing within an agent run.
     """
-    creds = _ensure_valid(sub, _credentials_from_doc(data))
-    session = AuthorizedSession(creds)
+    if session is None:
+        creds = _ensure_valid(sub, _credentials_from_doc(data))
+        session = AuthorizedSession(creds)
 
     now = datetime.now(timezone.utc)
     end = now + timedelta(hours=hours)
@@ -413,7 +461,7 @@ def build_snapshot(sub: str, data: dict, hours: int) -> dict:
 
     events = _list_events(session, time_min, time_max)
     busy = _freebusy(session, time_min, time_max)
-    tasks = load_tasks(sub)
+    tasks = _jsonify(load_tasks(sub))  # tasks may carry Firestore datetimes
 
     return {
         "window": {"start": time_min, "end": time_max, "hours": hours, "timezone": "UTC"},
@@ -546,14 +594,23 @@ FUNCTION_DECLARATIONS = [
 
 SYSTEM_PROMPT = (
     "You are Clutch, a proactive scheduling agent. Your job: ensure the user "
-    "finishes their work before its deadline by planning concrete actions.\n"
+    "finishes their work before its deadline by taking concrete action.\n"
     "Process: (1) Call get_schedule_snapshot first to perceive the calendar and "
-    "tasks. (2) Reason about time remaining vs. work remaining. (3) Propose "
-    "actions via function calls: break the goal into subtasks, book focus blocks "
-    "in free time before the deadline, reschedule conflicts, and re-prioritize. "
-    "Prefer concrete times that fit the user's actual free/busy. When the plan is "
-    "complete, stop calling functions and reply with a one-paragraph summary of "
-    "what you propose and why."
+    "tasks. (2) Reason about time remaining vs. work remaining. (3) Act via "
+    "function calls: break the goal into subtasks, book focus blocks in the "
+    "user's actual FREE time before the deadline, reschedule conflicts, and "
+    "re-prioritize. These calendar/task actions are executed for real and are "
+    "reversible, so act decisively but do not double-book. Respect the scheduling "
+    "policy in the prompt: keep focus blocks inside working hours and within the "
+    "max block length, splitting longer work across multiple days.\n"
+    "Schedule by EFFORT: book roughly the minutes each subtask needs and no more. "
+    "A subtask whose effort fits one block gets exactly ONE block; only split a "
+    "subtask into multiple blocks if its effort exceeds the max block length "
+    "(e.g. 300 min over a 120-min cap => 2-3 blocks). The total time you book "
+    "should approximate the SUM of subtask efforts — never schedule the same "
+    "subtask repeatedly or create near-duplicate blocks to fill time. Prefer few, "
+    "well-placed blocks; you may issue several function calls in one step. When "
+    "done, stop calling functions and reply with a one-paragraph receipt."
 )
 
 
@@ -597,13 +654,18 @@ def rank_tasks(tasks: list[dict]) -> list[dict]:
 
 
 def _gemini_client() -> genai.Client:
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
+    """Vertex AI Gemini client over ADC (no API key). Bills to the GCP project."""
+    if not PROJECT_ID:
         raise HTTPException(
-            status_code=500, detail="Missing GEMINI_API_KEY. Set it in your .env file."
+            status_code=500,
+            detail="Set GOOGLE_CLOUD_PROJECT (and run `gcloud auth application-default "
+            "login`) to use Vertex AI.",
         )
     return genai.Client(
-        api_key=key, http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS)
+        vertexai=True,
+        project=PROJECT_ID,
+        location=VERTEX_LOCATION,
+        http_options=types.HttpOptions(timeout=GEMINI_TIMEOUT_MS),
     )
 
 
@@ -668,11 +730,323 @@ def generate_with_fallback(client, contents, config) -> tuple[object, str, list[
         raise HTTPException(status_code=502, detail={"error": "Both Gemini models failed", "log": log})
 
 
-def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hours: int) -> dict:
-    """Read/propose agent loop: perceive -> pre-rank -> plan with Gemini.
+# --- Lane A executors + action log -------------------------------------------
 
-    EXECUTES only get_schedule_snapshot (read-only). All write tool calls are
-    captured as proposals and NOT executed in this build.
+
+def _event_time(dt_str: str) -> dict:
+    """Build a Calendar start/end object; add timeZone only if no offset given."""
+    try:
+        d = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            return {"dateTime": dt_str, "timeZone": "UTC"}
+    except (ValueError, AttributeError):
+        return {"dateTime": dt_str, "timeZone": "UTC"}
+    return {"dateTime": dt_str}
+
+
+def _cal_create(session, title, start, end, description=None) -> dict:
+    note = "🤖 Created by Clutch (agent focus block)."
+    body = {
+        "summary": title,
+        "start": _event_time(start),
+        "end": _event_time(end),
+        "description": f"{description}\n\n{note}" if description else note,
+        # Tag so undo/UI can tell agent events from the user's own.
+        "extendedProperties": {"private": {CLUTCH_MARKER: "1", "clutch_action": "focus_block"}},
+    }
+    resp = session.post(f"{CALENDAR_BASE}/calendars/primary/events", json=body)
+    if resp.status_code not in (200, 201):
+        raise HTTPException(502, f"events.insert failed ({resp.status_code}): {resp.text}")
+    return resp.json()
+
+
+def _cal_get(session, event_id) -> dict:
+    resp = session.get(f"{CALENDAR_BASE}/calendars/primary/events/{event_id}")
+    if resp.status_code != 200:
+        raise HTTPException(502, f"events.get failed ({resp.status_code}): {resp.text}")
+    return resp.json()
+
+
+def _cal_patch(session, event_id, patch) -> dict:
+    resp = session.patch(f"{CALENDAR_BASE}/calendars/primary/events/{event_id}", json=patch)
+    if resp.status_code != 200:
+        raise HTTPException(502, f"events.patch failed ({resp.status_code}): {resp.text}")
+    return resp.json()
+
+
+def _cal_delete(session, event_id) -> None:
+    resp = session.delete(f"{CALENDAR_BASE}/calendars/primary/events/{event_id}")
+    if resp.status_code not in (200, 204, 410):  # 410 = already gone (idempotent)
+        raise HTTPException(502, f"events.delete failed ({resp.status_code}): {resp.text}")
+
+
+def _list_clutch_events(session, time_min, time_max) -> list[dict]:
+    """List ONLY events carrying the clutch marker (privateExtendedProperty filter).
+
+    The server-side filter guarantees the user's own (unmarked) events are never
+    returned — the safety boundary for bulk delete.
+    """
+    resp = session.get(
+        f"{CALENDAR_BASE}/calendars/primary/events",
+        params={
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "singleEvents": "true",
+            "maxResults": 250,
+            "privateExtendedProperty": f"{CLUTCH_MARKER}=1",
+        },
+    )
+    if resp.status_code != 200:
+        raise HTTPException(502, f"events.list (clutch filter) failed ({resp.status_code}): {resp.text}")
+    return resp.json().get("items", [])
+
+
+def log_action(sub, action, args, result, undo) -> str:
+    """Append an action_log record with enough info to reverse it later."""
+    ref = db().collection(USERS).document(sub).collection(ACTION_LOG).document()
+    ref.set(
+        {
+            "action": action,
+            "args": args,
+            "result": result,
+            "undo": undo,
+            "undone": False,
+            "created_at": firestore.SERVER_TIMESTAMP,
+        }
+    )
+    return ref.id
+
+
+def _safe_parse_local(dt_str, tz: ZoneInfo) -> datetime | None:
+    """Parse an ISO datetime into tz; return None if absent/unparseable."""
+    if not dt_str:
+        return None
+    try:
+        return _parse_local(str(dt_str), tz)
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalize_due(due_str, now: datetime, deadline_dt: datetime | None,
+                   idx: int, total: int, tz: ZoneInfo) -> datetime:
+    """Force a subtask due date into (now, deadline]; recompute if invalid.
+
+    Never returns a past date. If the model's date is missing/past/after the
+    deadline, distribute due dates evenly across the remaining window so the
+    work is paced rather than invented.
+    """
+    d = _safe_parse_local(due_str, tz)
+    if d is None or d < now or (deadline_dt and d > deadline_dt):
+        if deadline_dt and deadline_dt > now:
+            frac = (idx + 1) / (total + 1)  # +1 leaves a buffer before the deadline
+            d = now + (deadline_dt - now) * frac
+        else:
+            d = now + timedelta(days=idx + 1)  # no usable deadline: space out daily
+    return d
+
+
+def decompose_goal(client, goal, now: datetime, deadline_dt: datetime | None) -> list[dict]:
+    """One bounded Gemini call: goal -> list of subtask dicts (title/effort/due).
+
+    The current date and deadline are passed in explicitly so the model dates
+    relative to NOW; dues are still validated/clamped by the caller afterwards.
+    """
+    deadline_str = deadline_dt.isoformat() if deadline_dt else "unspecified"
+    prompt = (
+        f"The current date and time is {now.isoformat()}.\n"
+        "Break this goal into 2-6 concrete, time-estimated subtasks. Return a JSON "
+        "array of objects with keys: title (string), effort (integer minutes), "
+        "due (ISO 8601 datetime string).\n"
+        f"Every `due` MUST be strictly after {now.isoformat()} and on or before "
+        f"the deadline {deadline_str}. Do NOT use any date from your training data "
+        "or any date in the past — compute dates relative to the current date above.\n"
+        f"Goal: {goal}\nDeadline: {deadline_str}"
+    )
+    cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=0.2)
+    resp, _model, _log = generate_with_fallback(
+        client, [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])], cfg
+    )
+    try:
+        items = json.loads(resp.text)
+        return items[:8] if isinstance(items, list) else []
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def get_prefs(data: dict) -> dict:
+    """Resolve scheduling prefs: per-user (Firestore) overriding module defaults."""
+    p = (data or {}).get("prefs") or {}
+    return {
+        "work_tz": p.get("work_tz", WORK_TZ),
+        "work_start_hour": int(p.get("work_start_hour", WORK_START_HOUR)),
+        "work_end_hour": int(p.get("work_end_hour", WORK_END_HOUR)),
+        "max_block_minutes": int(p.get("max_block_minutes", MAX_BLOCK_MINUTES)),
+        "min_block_minutes": int(p.get("min_block_minutes", MIN_BLOCK_MINUTES)),
+    }
+
+
+def _parse_local(dt_str: str, tz: ZoneInfo) -> datetime:
+    """Parse an ISO time into the working timezone (naive => assume local tz)."""
+    d = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=tz)
+    return d.astimezone(tz)
+
+
+def enforce_working_hours(start_iso: str, end_iso: str, prefs: dict) -> tuple[str, str, str | None]:
+    """Clamp a focus block into local working hours and to the max block length.
+
+    Deterministic guard (not a model request): returns (start, end, note) with the
+    block forced inside [work_start, work_end] on the start day and <= max length.
+    Raises 422 if no valid slot remains, so the model can re-propose.
+    """
+    tz = ZoneInfo(prefs["work_tz"])
+    s = _parse_local(start_iso, tz)
+    e = _parse_local(end_iso, tz)
+
+    open_dt = s.replace(hour=prefs["work_start_hour"], minute=0, second=0, microsecond=0)
+    close_dt = s.replace(hour=prefs["work_end_hour"], minute=0, second=0, microsecond=0)
+
+    new_s = max(s, open_dt)
+    new_e = min(e, close_dt, new_s + timedelta(minutes=prefs["max_block_minutes"]))
+
+    if new_e <= new_s or (new_e - new_s) < timedelta(minutes=prefs["min_block_minutes"]):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Proposed block {start_iso}–{end_iso} cannot fit working hours "
+                f"{prefs['work_start_hour']:02d}:00–{prefs['work_end_hour']:02d}:00 "
+                f"{prefs['work_tz']} (max {prefs['max_block_minutes']} min). "
+                "Choose a slot fully inside working hours."
+            ),
+        )
+
+    note = None
+    if new_s != s or new_e != e:
+        note = (
+            f"clamped into working hours / {prefs['max_block_minutes']}-min cap: "
+            f"{new_s.isoformat()} – {new_e.isoformat()}"
+        )
+    return new_s.isoformat(), new_e.isoformat(), note
+
+
+def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=None) -> tuple[dict, dict]:
+    """Execute one Lane A tool + write an action_log entry. Returns (result, record)."""
+    tasks_coll = db().collection(USERS).document(sub).collection(TASKS)
+
+    if name == "create_calendar_event":
+        # Deterministically enforce working hours + max block length.
+        start, end, adjusted = enforce_working_hours(args["start"], args["end"], prefs)
+        ev = _cal_create(
+            session, args.get("title", "Focus block"), start, end, args.get("description"),
+        )
+        result = {
+            "event_id": ev.get("id"),
+            "htmlLink": ev.get("htmlLink"),
+            "title": args.get("title", "Focus block"),
+            "start": start,
+            "end": end,
+            "adjusted": adjusted,
+        }
+        undo = {"type": "delete_event", "event_id": ev.get("id")}
+
+    elif name == "reschedule_event":
+        prev = _cal_get(session, args["event_id"])
+        _cal_patch(
+            session, args["event_id"],
+            {"start": _event_time(args["new_start"]), "end": _event_time(args["new_end"])},
+        )
+        result = {"event_id": args["event_id"], "new_start": args["new_start"], "new_end": args["new_end"]}
+        undo = {
+            "type": "restore_event_time",
+            "event_id": args["event_id"],
+            "prev_start": prev.get("start"),
+            "prev_end": prev.get("end"),
+        }
+
+    elif name == "break_down_task":
+        # Anchor dates on NOW + the real deadline (model's deadline arg, else the
+        # run-level deadline). All dues are validated/clamped into (now, deadline]
+        # so a past or hallucinated date is never written.
+        tz = ZoneInfo(prefs["work_tz"])
+        now = datetime.now(tz)
+        deadline_dt = _safe_parse_local(args.get("deadline") or run_deadline, tz)
+
+        subtasks = decompose_goal(client, args["goal"], now, deadline_dt)
+        total = len(subtasks)
+        for i, st in enumerate(subtasks):
+            st["due"] = _normalize_due(st.get("due"), now, deadline_dt, i, total, tz).isoformat()
+
+        ids = []
+        batch = db().batch()
+        for st in subtasks:
+            ref = tasks_coll.document()
+            batch.set(
+                ref,
+                {
+                    "title": st.get("title"),
+                    "effort": st.get("effort"),
+                    "due": st.get("due"),
+                    "status": "todo",
+                    "parent_goal": args["goal"],
+                    "created_at": firestore.SERVER_TIMESTAMP,
+                },
+            )
+            ids.append(ref.id)
+        if ids:
+            batch.commit()
+        result = {"created_task_ids": ids, "subtasks": subtasks}
+        undo = {"type": "delete_tasks", "task_ids": ids}
+
+    elif name == "upsert_task":
+        fields = {k: args[k] for k in ("title", "due", "effort", "status") if args.get(k) is not None}
+        task_id = args.get("task_id")
+        if task_id:
+            snap = tasks_coll.document(task_id).get()
+            prev = snap.to_dict() if snap.exists else None
+            fields["updated_at"] = firestore.SERVER_TIMESTAMP
+            tasks_coll.document(task_id).set(fields, merge=True)
+            undo = (
+                {"type": "delete_task", "task_id": task_id}
+                if prev is None
+                else {"type": "restore_task", "task_id": task_id, "prev_fields": prev}
+            )
+        else:
+            ref = tasks_coll.document()
+            task_id = ref.id
+            fields.setdefault("status", "todo")
+            fields["created_at"] = firestore.SERVER_TIMESTAMP
+            ref.set(fields)
+            undo = {"type": "delete_task", "task_id": task_id}
+        result = {"task_id": task_id}
+
+    elif name == "reprioritize":
+        ids = args.get("ranked_task_ids", [])
+        prev = {}
+        batch = db().batch()
+        for idx, tid in enumerate(ids):
+            snap = tasks_coll.document(tid).get()
+            prev[tid] = snap.to_dict().get("priority") if snap.exists else None
+            batch.set(tasks_coll.document(tid), {"priority": idx}, merge=True)
+        if ids:
+            batch.commit()
+        result = {"ordered": ids}
+        undo = {"type": "restore_priorities", "prev": prev}
+
+    else:
+        raise HTTPException(500, f"Unhandled Lane A tool: {name}")
+
+    action_id = log_action(sub, name, args, result, undo)
+    record = {"action_id": action_id, "name": name, "args": args, "result": result}
+    return result, record
+
+
+def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hours: int) -> dict:
+    """Agent loop: perceive -> pre-rank -> plan with Gemini, EXECUTING Lane A.
+
+    Lane A (calendar/Firestore writes) is executed and logged for undo. Lane B
+    (draft_message) is captured as a proposal only. notify_user just surfaces a
+    message. Hard-capped by step count and total actions.
     """
     client = _gemini_client()
     config = types.GenerateContentConfig(
@@ -682,30 +1056,50 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
         temperature=0.2,
     )
 
-    # 1) Perceive deterministically, then pre-rank (auditable).
-    perceived = build_snapshot(sub, data, hours)
-    ranking = rank_tasks(perceived["tasks"])
-    executed = [{"name": "get_schedule_snapshot", "args": {"hours": hours}, "trigger": "initial perceive"}]
-    last_snapshot = perceived
+    # One refreshed session reused for every Calendar write this run (refreshes +
+    # persists the token if expired — satisfies the per-write refresh rule).
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+    prefs = get_prefs(data)
 
-    # 2) Seed the conversation with the goal + snapshot + ranking.
+    # 1) Perceive deterministically, then pre-rank (auditable).
+    perceived = build_snapshot(sub, data, hours, session=session)
+    ranking = rank_tasks(perceived["tasks"])
+
+    # 2) Seed the conversation with the goal + snapshot + ranking + policy.
+    policy = (
+        f"Scheduling policy (ENFORCED server-side): only book focus blocks between "
+        f"{prefs['work_start_hour']:02d}:00 and {prefs['work_end_hour']:02d}:00 "
+        f"{prefs['work_tz']}; max {prefs['max_block_minutes']} min per block; at most "
+        f"{MAX_EVENTS_PER_RUN} events total this run (the run HALTS past that). Book "
+        f"time proportional to each subtask's effort — one block per subtask unless "
+        f"its effort exceeds the block cap. Split longer work across different days. "
+        f"Blocks outside this are rejected/clamped, so propose compliant times."
+    )
     user_prompt = (
-        f"Goal: {goal or '(no specific goal — review my schedule and propose improvements)'}\n"
+        f"Goal: {goal or '(no specific goal — review my schedule and improve it)'}\n"
         f"Deadline: {deadline or '(unspecified)'}\n\n"
+        f"{policy}\n\n"
         f"Current schedule snapshot (window {perceived['window']['start']} → "
         f"{perceived['window']['end']}):\n"
         f"- events: {perceived['events']}\n"
         f"- busy: {perceived['busy']}\n"
         f"- existing subtasks (deterministically pre-ranked): {ranking}\n\n"
-        "Propose the plan as function calls."
+        "Take the actions needed via function calls."
     )
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_prompt)])]
 
+    executed_reads = [{"name": "get_schedule_snapshot", "args": {"hours": hours}, "trigger": "initial perceive"}]
+    executed_actions: list[dict] = []
     proposed: list[dict] = []
+    notifications: list[dict] = []
     steps_log: list[dict] = []
+    last_snapshot = perceived
     final_text = None
+    events_created = 0      # dedicated counter for create_calendar_event
+    halted = False          # set when a hard cap is hit; stops the run after the turn
 
-    # 3) Plan/observe loop, hard-capped.
+    # 3) Plan/act/observe loop, hard-capped.
     for step in range(AGENT_STEP_CAP):
         resp, model, attempts = generate_with_fallback(client, contents, config)
         fcs = resp.function_calls or []
@@ -719,23 +1113,69 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
         contents.append(resp.candidates[0].content)  # model's function-call turn
         tool_parts = []
         for fc in fcs:
+            name = fc.name
             args = dict(fc.args) if fc.args else {}
-            if fc.name in EXECUTABLE_TOOLS:  # read-only execute
-                last_snapshot = build_snapshot(sub, data, hours)
-                executed.append({"name": fc.name, "args": args, "trigger": "model-requested"})
-                tool_parts.append(
-                    types.Part.from_function_response(name=fc.name, response={"snapshot": last_snapshot})
-                )
-            else:  # write/draft -> capture as proposal, DO NOT execute
-                proposed.append({"name": fc.name, "args": args})
-                tool_parts.append(
-                    types.Part.from_function_response(
-                        name=fc.name,
-                        response={"status": "proposed_not_executed",
-                                  "note": "dry-run: write actions are not executed in this build"},
-                    )
-                )
+
+            if name == "get_schedule_snapshot":  # read-only execute
+                last_snapshot = build_snapshot(sub, data, hours, session=session)
+                executed_reads.append({"name": name, "args": args, "trigger": "model-requested"})
+                payload = {"snapshot": last_snapshot}
+
+            elif name == "create_calendar_event":  # hard per-run event cap + halt
+                if events_created >= MAX_EVENTS_PER_RUN or len(executed_actions) >= AGENT_MAX_ACTIONS:
+                    halted = True
+                    payload = {"status": "halted",
+                               "note": f"per-run cap reached (max {MAX_EVENTS_PER_RUN} events); "
+                                       "stop creating events."}
+                else:
+                    try:
+                        result, record = execute_lane_a(
+                            sub, data, session, client, name, args, prefs, run_deadline=deadline
+                        )
+                        executed_actions.append(record)
+                        events_created += 1  # count only events that were actually created
+                        payload = {"status": "executed", **result}
+                    except Exception as e:  # feed the error back so the model can adapt
+                        detail = e.detail if isinstance(e, HTTPException) else str(e)
+                        logger.warning("create_calendar_event failed: %s", detail)
+                        payload = {"status": "error",
+                                   "detail": detail if isinstance(detail, (str, dict, list)) else str(detail)}
+
+            elif name in LANE_A_TOOLS:  # other reversible writes (tasks) + log
+                if len(executed_actions) >= AGENT_MAX_ACTIONS:
+                    payload = {"status": "skipped", "note": f"action limit ({AGENT_MAX_ACTIONS}) reached"}
+                else:
+                    try:
+                        result, record = execute_lane_a(
+                            sub, data, session, client, name, args, prefs, run_deadline=deadline
+                        )
+                        executed_actions.append(record)
+                        payload = {"status": "executed", **result}
+                    except Exception as e:
+                        detail = e.detail if isinstance(e, HTTPException) else str(e)
+                        logger.warning("Lane A %s failed: %s", name, detail)
+                        payload = {"status": "error",
+                                   "detail": detail if isinstance(detail, (str, dict, list)) else str(detail)}
+
+            elif name in LANE_B_PROPOSE:  # propose only (confirm-first comes later)
+                proposed.append({"name": name, "args": args})
+                payload = {"status": "proposed_not_executed",
+                           "note": "Lane B requires user confirmation (later step)."}
+
+            elif name == "notify_user":
+                notifications.append({"message": args.get("message"), "urgency": args.get("urgency", "normal")})
+                payload = {"status": "delivered"}
+
+            else:
+                payload = {"status": "unknown_tool"}
+
+            tool_parts.append(types.Part.from_function_response(name=name, response=payload))
         contents.append(types.Content(role="tool", parts=tool_parts))
+
+        if halted:  # a hard cap was hit this turn — stop the run now
+            final_text = (f"Halted: per-run cap reached ({events_created} events, "
+                          f"{len(executed_actions)} actions).")
+            break
     else:
         final_text = f"Step cap ({AGENT_STEP_CAP}) reached before the model finished."
 
@@ -743,11 +1183,16 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
         "goal": goal,
         "deadline": deadline,
         "models": {"primary": PRIMARY_MODEL, "fallback": FALLBACK_MODEL},
+        "caps": {"max_events_per_run": MAX_EVENTS_PER_RUN, "max_actions": AGENT_MAX_ACTIONS},
         "steps": steps_log,
         "snapshot": last_snapshot,
         "ranking": ranking,
-        "executed_read_only": executed,
+        "executed_reads": executed_reads,
+        "executed_actions": executed_actions,
+        "events_created": events_created,
+        "halted": halted,
         "proposed_writes_not_executed": proposed,
+        "notifications": notifications,
         "final_text": final_text,
     }
 
@@ -766,6 +1211,46 @@ def _require_user(request: Request) -> tuple[str, dict]:
     return sub, data
 
 
+class PrefsRequest(BaseModel):
+    work_tz: str | None = None
+    work_start_hour: int | None = None
+    work_end_hour: int | None = None
+    max_block_minutes: int | None = None
+    min_block_minutes: int | None = None
+
+
+@app.get("/prefs")
+def get_prefs_route(request: Request):
+    """Show the effective scheduling prefs (per-user overrides + defaults)."""
+    _, data = _require_user(request)
+    return get_prefs(data)
+
+
+@app.post("/prefs")
+def set_prefs_route(body: PrefsRequest, request: Request):
+    """Update per-user scheduling prefs in Firestore (users/{sub}.prefs)."""
+    sub, _ = _require_user(request)
+    updates = body.model_dump(exclude_none=True)
+
+    if "work_tz" in updates:
+        try:
+            ZoneInfo(updates["work_tz"])  # reject unknown timezones early
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"Unknown timezone: {updates['work_tz']}")
+    for h in ("work_start_hour", "work_end_hour"):
+        if h in updates and not (0 <= updates[h] <= 24):
+            raise HTTPException(status_code=400, detail=f"{h} must be between 0 and 24.")
+    start_h = updates.get("work_start_hour", WORK_START_HOUR)
+    end_h = updates.get("work_end_hour", WORK_END_HOUR)
+    if start_h >= end_h:
+        raise HTTPException(status_code=400, detail="work_start_hour must be before work_end_hour.")
+
+    if updates:
+        # Dotted paths update nested map fields without clobbering siblings.
+        db().collection(USERS).document(sub).update({f"prefs.{k}": v for k, v in updates.items()})
+    return get_prefs(load_user(sub))
+
+
 @app.post("/agent/plan")
 def agent_plan(body: PlanRequest, request: Request):
     """Plan for a specific goal+deadline. Read/propose only (no writes)."""
@@ -776,9 +1261,186 @@ def agent_plan(body: PlanRequest, request: Request):
 
 
 @app.get("/agent/run")
-def agent_run(request: Request, hours: int = 48, goal: str | None = None):
-    """Review the schedule (optionally for a goal) and propose. Read/propose only."""
+def agent_run(
+    request: Request,
+    hours: int = 48,
+    goal: str | None = None,
+    deadline: str | None = None,
+):
+    """Review the schedule (optionally for a goal) and ACT (Lane A executed).
+
+    Pass `deadline` as ISO 8601 (e.g. 2026-06-27T18:00:00+05:30) so subtask due
+    dates are bounded by a real deadline. Recommended whenever `goal` is set.
+    """
     if hours < 1 or hours > 24 * 30:
         raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
+    if goal and not deadline:
+        logger.warning("agent_run called with a goal but no deadline; dues will be paced, not bounded.")
     sub, data = _require_user(request)
-    return run_agent(sub, data, goal, None, hours)
+    return run_agent(sub, data, goal, deadline, hours)
+
+
+# --- Undo (reverses logged actions; never guesses) ---------------------------
+
+
+def _reverse_action(sub: str, session: AuthorizedSession, rec: dict) -> None:
+    undo = rec.get("undo") or {}
+    t = undo.get("type")
+    tasks_coll = db().collection(USERS).document(sub).collection(TASKS)
+
+    if t == "delete_event":
+        _cal_delete(session, undo["event_id"])
+    elif t == "restore_event_time":
+        _cal_patch(session, undo["event_id"], {"start": undo["prev_start"], "end": undo["prev_end"]})
+    elif t == "delete_task":
+        tasks_coll.document(undo["task_id"]).delete()
+    elif t == "delete_tasks":
+        batch = db().batch()
+        for tid in undo.get("task_ids", []):
+            batch.delete(tasks_coll.document(tid))
+        batch.commit()
+    elif t == "restore_task":
+        tasks_coll.document(undo["task_id"]).set(undo["prev_fields"])  # full replace
+    elif t == "restore_priorities":
+        batch = db().batch()
+        for tid, pr in (undo.get("prev") or {}).items():
+            batch.set(tasks_coll.document(tid), {"priority": pr}, merge=True)
+        batch.commit()
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown or missing undo type: {t}")
+
+
+def _do_undo(sub: str, data: dict, snap) -> dict:
+    rec = snap.to_dict()
+    if rec.get("undone"):
+        raise HTTPException(status_code=409, detail="Action already undone.")
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+    _reverse_action(sub, session, rec)
+    snap.reference.set({"undone": True, "undone_at": firestore.SERVER_TIMESTAMP}, merge=True)
+    return {
+        "undone": True,
+        "action_id": snap.id,
+        "action": rec.get("action"),
+        "undo_type": (rec.get("undo") or {}).get("type"),
+    }
+
+
+@app.get("/agent/actions")
+def agent_actions(request: Request, limit: int = 20):
+    """List recent actions (newest first) with undo status."""
+    sub, _ = _require_user(request)
+    docs = (
+        db().collection(USERS).document(sub).collection(ACTION_LOG)
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+        .limit(limit)
+        .stream()
+    )
+    out = []
+    for d in docs:
+        r = d.to_dict()
+        created = r.get("created_at")
+        out.append({
+            "action_id": d.id,
+            "action": r.get("action"),
+            "result": r.get("result"),
+            "undone": r.get("undone", False),
+            "created_at": created.isoformat() if created else None,
+        })
+    return {"actions": out}
+
+
+@app.post("/agent/undo")
+def agent_undo(request: Request):
+    """Undo the most recent action that hasn't been undone yet."""
+    sub, data = _require_user(request)
+    docs = (
+        db().collection(USERS).document(sub).collection(ACTION_LOG)
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+        .limit(25)
+        .stream()
+    )
+    for d in docs:
+        if not d.to_dict().get("undone"):
+            return _do_undo(sub, data, d)
+    raise HTTPException(status_code=404, detail="No action available to undo.")
+
+
+@app.post("/agent/undo/{action_id}")
+def agent_undo_by_id(action_id: str, request: Request):
+    """Undo a specific logged action by id."""
+    sub, data = _require_user(request)
+    snap = db().collection(USERS).document(sub).collection(ACTION_LOG).document(action_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Action not found.")
+    return _do_undo(sub, data, snap)
+
+
+@app.post("/agent/undo-all")
+def agent_undo_all(request: Request):
+    """Bulk clear: delete ALL Clutch-created calendar events + clean up subtasks.
+
+    SAFETY: only events carrying the clutch marker are deleted (server-side
+    privateExtendedProperty filter, re-checked per event). The user's own real
+    events are never touched. Also reverts task writes and marks the action log
+    undone. Returns a summary.
+    """
+    sub, data = _require_user(request)
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+
+    now = datetime.now(timezone.utc)
+    t_min = (now - timedelta(days=30)).isoformat()
+    t_max = (now + timedelta(days=365)).isoformat()
+
+    # 1) Delete ONLY clutch-marked events (double-checked before each delete).
+    events_deleted = 0
+    events_skipped_unmarked = 0
+    for ev in _list_clutch_events(session, t_min, t_max):
+        private = (ev.get("extendedProperties", {}) or {}).get("private", {}) or {}
+        if private.get(CLUTCH_MARKER) != "1":
+            events_skipped_unmarked += 1  # belt-and-suspenders: never delete unmarked
+            continue
+        _cal_delete(session, ev["id"])
+        events_deleted += 1
+
+    # 2) Walk the action log: clean up subtasks, revert reschedules, mark undone.
+    tasks_deleted = 0
+    reschedules_reverted = 0
+    actions_marked = 0
+    tasks_coll = db().collection(USERS).document(sub).collection(TASKS)
+    for d in db().collection(USERS).document(sub).collection(ACTION_LOG).stream():
+        rec = d.to_dict()
+        if rec.get("undone"):
+            continue
+        undo = rec.get("undo") or {}
+        t = undo.get("type")
+        if t == "delete_tasks":
+            for tid in undo.get("task_ids", []):
+                tasks_coll.document(tid).delete()
+                tasks_deleted += 1
+        elif t == "delete_task":
+            tasks_coll.document(undo["task_id"]).delete()
+            tasks_deleted += 1
+        elif t == "restore_event_time":
+            try:
+                _cal_patch(session, undo["event_id"], {"start": undo["prev_start"], "end": undo["prev_end"]})
+                reschedules_reverted += 1
+            except HTTPException:
+                pass  # event may have been a clutch block already deleted in step 1
+        elif t == "restore_task":
+            tasks_coll.document(undo["task_id"]).set(undo["prev_fields"])
+        elif t == "restore_priorities":
+            for tid, pr in (undo.get("prev") or {}).items():
+                tasks_coll.document(tid).set({"priority": pr}, merge=True)
+        # delete_event handled by the marker scan in step 1
+        d.reference.set({"undone": True, "undone_at": firestore.SERVER_TIMESTAMP}, merge=True)
+        actions_marked += 1
+
+    return {
+        "events_deleted": events_deleted,
+        "events_skipped_unmarked": events_skipped_unmarked,
+        "tasks_deleted": tasks_deleted,
+        "reschedules_reverted": reschedules_reverted,
+        "actions_marked_undone": actions_marked,
+    }

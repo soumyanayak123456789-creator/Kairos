@@ -6,3 +6,4 @@ python-dotenv
 requests
 google-cloud-firestore
 google-genai
+tzdata

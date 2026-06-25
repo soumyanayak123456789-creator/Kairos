@@ -20,10 +20,14 @@ tasks before deadlines (NOT passive reminders).
 - Backend: Python + FastAPI on Cloud Run.
 - State + task store: **Firestore** (single source of truth for tasks, plan
   ledger, action log, prefs, cursor, OAuth tokens).
-- Auth: **direct Google OAuth 2.0** (google-auth / Authlib), refresh tokens
-  stored in Firestore. NOT Firebase Auth — we need durable server-side tokens
-  for background (Cloud Scheduler) agent runs, which is OAuth 2.0's strength.
-- LLM: Gemini with function calling.
+- Auth: **direct Google OAuth 2.0** (google-auth / google-auth-oauthlib), refresh
+  tokens stored in Firestore. NOT Firebase Auth — we need durable server-side
+  tokens for background (Cloud Scheduler) agent runs, which is OAuth 2.0's strength.
+- LLM: Gemini via **Vertex AI over Application Default Credentials** (NOT an AI
+  Studio API key) — bills the GCP project's credit. Primary `gemini-2.5-flash`,
+  fallback `gemini-2.5-flash-lite` (retry-once-then-failover). Region via
+  `VERTEX_LOCATION` (default `global`). Function calling. `GEMINI_API_KEY` is no
+  longer the default path.
 
 ## Tooling decisions (and why) — do not re-litigate
 - **Google Tasks dropped as a dependency.** Its API `due` is date-only and it
@@ -33,6 +37,28 @@ tasks before deadlines (NOT passive reminders).
 - **Google Calendar API stays** — it is the product's action surface ("the
   save"). Highest-friction tool but irreplaceable; pay the OAuth cost.
 - Cloud Run, Firestore, Gemini, Cloud Scheduler all kept (load-bearing).
+
+## Implemented so far (build steps 1–6)
+- Cloud Run hello-world deploy path proven (step 1).
+- Direct Google OAuth 2.0 login (`/login`, `/oauth2callback`, `/me`); PKCE
+  verifier keyed by OAuth `state` (works across instances).
+- Firestore persistence (ADC, no key file): `users/{sub}` (tokens + `prefs`),
+  `oauth_states`, subcollections `tasks` + `action_log`. Tokens auto-refresh and
+  write back.
+- Read path `/snapshot` (`get_schedule_snapshot`): Calendar events + free/busy + tasks.
+- Gemini function-calling agent loop (`/agent/run`, `/agent/plan`) on **Vertex AI**;
+  deterministic pre-ranker; step cap 16.
+- Lane A executed (create/reschedule events; `break_down_task`/`upsert_task`/
+  `reprioritize` → Firestore). Lane B (`draft_message`) proposed only; `notify_user`
+  surfaces deadline-feasibility warnings.
+- Action log + single undo (`/agent/undo`, `/agent/undo/{id}`) and bulk
+  `/agent/undo-all` (deletes ONLY `clutch`-marked events — never the user's own).
+- Guards: deterministic working-hours enforcement (08:00–22:00 Asia/Kolkata
+  default, per-user prefs) + max 2h block; hard caps `MAX_EVENTS_PER_RUN=8`
+  (halts the run) and `AGENT_MAX_ACTIONS=10`; subtask due-dates normalized to
+  (now, deadline].
+- Known imperfection: block sizing is effort-PROMPT-steered, not deterministically
+  minute-accounted; the hard guarantee is the ≤8-events/run cap.
 
 ## Rubric (design every decision against this)
 Problem Solving & Impact 20, Agentic Depth 20, Innovation 20,
@@ -44,8 +70,10 @@ Completeness 5.
 - Deadline June 29, 2:00 PM. MVP spine FIRST, demo-proven (~June 27), THEN stretch.
 - Stretch order is fixed: (1) Cloud Scheduler background cron, (2) voice input,
   (3) Maps commute. Do not build any stretch item before the spine works.
-- Minimum OAuth scopes only: `calendar.events`, `tasks` (or just `calendar.events`
-  if Tasks mirror is dropped). NEVER request a Gmail-send scope.
+- Minimum OAuth scopes only: `calendar.events` + `calendar.freebusy` (verified:
+  `freebusy.query` is NOT authorized by `calendar.events`), plus
+  `openid`/`email`/`profile` for identity; add `tasks` only for the optional S4
+  mirror. NEVER request a Gmail-send scope.
 - Do NOT invent API capabilities — if uncertain, say so and verify before relying.
 
 ## Verified constraints to respect
