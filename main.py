@@ -41,11 +41,13 @@ Collection `users`         — durable per-user data, keyed by Google account id
 """
 
 import os
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from google.auth.transport.requests import AuthorizedSession
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.cloud import firestore
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -55,12 +57,20 @@ load_dotenv()
 # --- OAuth configuration -----------------------------------------------------
 
 # Minimum scopes per design.md / CLAUDE.md: calendar.events for the action
-# surface, plus openid/email/profile for identity. NEVER a Gmail-send scope.
+# surface (events.list / insert / patch), plus openid/email/profile for
+# identity. NEVER a Gmail-send scope.
+#
+# VERIFIED CORRECTION (against design.md §5): freebusy.query is NOT authorized
+# by calendar.events — the official reference only accepts calendar(.readonly),
+# calendar.freebusy, or calendar.events.freebusy. So we add the narrowest one,
+# calendar.freebusy, purely for freebusy.query. (Adding a scope => users must
+# re-consent at /login.)
 SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.freebusy",
 ]
 
 # Read secrets from the environment — never hardcode them.
@@ -74,6 +84,7 @@ REDIRECT_URI = os.environ.get(
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 
 USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+CALENDAR_BASE = "https://www.googleapis.com/calendar/v3"
 
 # Google may return scopes in a different order / add `openid`; relax the check
 # so the token exchange doesn't raise a spurious "scope has changed" warning.
@@ -187,6 +198,100 @@ def load_user(sub: str) -> dict | None:
     return snap.to_dict() if snap.exists else None
 
 
+def load_tasks(sub: str) -> list[dict]:
+    """Read the user's subtasks from Firestore (empty until later steps)."""
+    docs = db().collection(USERS).document(sub).collection("tasks").stream()
+    return [{"id": d.id, **d.to_dict()} for d in docs]
+
+
+# --- Calendar read path (get_schedule_snapshot) ------------------------------
+
+
+def _credentials_from_doc(data: dict) -> Credentials:
+    """Rebuild OAuth Credentials from a stored user doc."""
+    expiry = data.get("expiry")
+    # Firestore returns tz-aware datetimes; google-auth wants naive UTC.
+    if expiry is not None and expiry.tzinfo is not None:
+        expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
+    return Credentials(
+        token=data.get("token"),
+        refresh_token=data.get("refresh_token"),
+        token_uri=data.get("token_uri"),
+        client_id=data.get("client_id"),
+        client_secret=data.get("client_secret"),
+        scopes=data.get("scopes"),
+        expiry=expiry,
+    )
+
+
+def _ensure_valid(sub: str, creds: Credentials) -> Credentials:
+    """Refresh the access token if expired, persisting the new one to Firestore.
+
+    Only refreshes when actually needed, so we don't hammer the token endpoint.
+    """
+    if creds.valid:
+        return creds
+    if not creds.refresh_token:
+        raise HTTPException(
+            status_code=401, detail="Session expired and no refresh token. Re-login at /login."
+        )
+    creds.refresh(GoogleAuthRequest())
+    # Store the new access token + expiry (tz-aware UTC for Firestore).
+    expiry = creds.expiry
+    if expiry is not None and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    db().collection(USERS).document(sub).set(
+        {"token": creds.token, "expiry": expiry, "updated_at": firestore.SERVER_TIMESTAMP},
+        merge=True,
+    )
+    return creds
+
+
+def _list_events(session: AuthorizedSession, time_min: str, time_max: str) -> list[dict]:
+    resp = session.get(
+        f"{CALENDAR_BASE}/calendars/primary/events",
+        params={
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "singleEvents": "true",   # expand recurring into instances
+            "orderBy": "startTime",
+            "maxResults": 50,
+        },
+    )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502, detail=f"events.list failed ({resp.status_code}): {resp.text}"
+        )
+    out = []
+    for e in resp.json().get("items", []):
+        start, end = e.get("start", {}), e.get("end", {})
+        out.append(
+            {
+                "id": e.get("id"),
+                "summary": e.get("summary", "(no title)"),
+                # dateTime for timed events, date for all-day events.
+                "start": start.get("dateTime") or start.get("date"),
+                "end": end.get("dateTime") or end.get("date"),
+                "all_day": "date" in start,
+                "status": e.get("status"),
+            }
+        )
+    return out
+
+
+def _freebusy(session: AuthorizedSession, time_min: str, time_max: str) -> list[dict]:
+    resp = session.post(
+        f"{CALENDAR_BASE}/freeBusy",
+        json={"timeMin": time_min, "timeMax": time_max, "items": [{"id": "primary"}]},
+    )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502, detail=f"freebusy.query failed ({resp.status_code}): {resp.text}"
+        )
+    primary = resp.json().get("calendars", {}).get("primary", {})
+    return primary.get("busy", [])  # list of {start, end}
+
+
 # --- Routes ------------------------------------------------------------------
 
 
@@ -272,4 +377,38 @@ def me(request: Request):
         "has_refresh_token": bool(data.get("refresh_token")),
         "scopes": data.get("scopes"),
         "source": "firestore",
+    }
+
+
+@app.get("/snapshot")
+def snapshot(request: Request, hours: int = 48):
+    """get_schedule_snapshot: perceive calendar (events + free/busy) + tasks.
+
+    Read-only. Returns calendar/task data only — never token values.
+    """
+    if hours < 1 or hours > 24 * 30:
+        raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
+
+    sub = request.cookies.get(UID_COOKIE)
+    data = load_user(sub) if sub else None
+    if not data:
+        raise HTTPException(status_code=401, detail="Not logged in. Visit /login first.")
+
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(hours=hours)
+    time_min, time_max = now.isoformat(), end.isoformat()
+
+    events = _list_events(session, time_min, time_max)
+    busy = _freebusy(session, time_min, time_max)
+    tasks = load_tasks(sub)
+
+    return {
+        "window": {"start": time_min, "end": time_max, "hours": hours, "timezone": "UTC"},
+        "counts": {"events": len(events), "busy_blocks": len(busy), "tasks": len(tasks)},
+        "events": events,
+        "busy": busy,
+        "tasks": tasks,
     }
