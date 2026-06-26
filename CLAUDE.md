@@ -1,4 +1,4 @@
-# Project: Clutch — The Last-Minute Life Saver (Vibe2Ship hackathon)
+# Project: Kairos — The Last-Minute Life Saver (Vibe2Ship hackathon)
 
 Goal: build and ship a working AI productivity agent, with design.md as the
 living source-of-truth spec.

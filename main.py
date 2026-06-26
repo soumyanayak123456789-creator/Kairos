@@ -47,12 +47,13 @@ Collection `users`         — durable per-user data, keyed by Google account id
 import json
 import logging
 import os
+import pathlib
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from google import genai
 from google.genai import types
 from google.auth.transport.requests import AuthorizedSession
@@ -165,7 +166,10 @@ WORK_END_HOUR = 22           # latest a focus block may END (local)
 MAX_BLOCK_MINUTES = 120      # cap a single focus block at ~2h; split longer work
 MIN_BLOCK_MINUTES = 30       # reject a clamped block shorter than this
 
-app = FastAPI(title="Clutch", description="The Last-Minute Life Saver")
+app = FastAPI(title="Kairos", description="The Last-Minute Life Saver")
+
+# The single-page frontend lives in static/ and is served at GET / (below).
+STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 # --- Firestore client (lazy; uses Application Default Credentials) ------------
 
@@ -356,7 +360,16 @@ def _freebusy(session: AuthorizedSession, time_min: str, time_max: str) -> list[
 
 
 @app.get("/")
-def root():
+def index():
+    """Serve the Kairos single-page app (the user-facing frontend)."""
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+def health():
+    """Liveness/health check. Was GET / before the frontend was added; the
+    internal service name stays 'clutch' for deploy/continuity (not user-facing).
+    """
     return {"status": "ok", "service": "clutch"}
 
 
@@ -408,7 +421,7 @@ def oauth2callback(request: Request):
 
     save_user_tokens(sub, info.get("email"), info.get("name"), creds)
 
-    resp = RedirectResponse("/me")
+    resp = RedirectResponse("/")  # land back on the Kairos SPA, signed in
     # Point the browser at this user's Firestore doc. Opaque id, not a secret.
     resp.set_cookie(
         UID_COOKIE,
@@ -489,6 +502,45 @@ def snapshot(request: Request, hours: int = 48):
     if not data:
         raise HTTPException(status_code=401, detail="Not logged in. Visit /login first.")
     return build_snapshot(sub, data, hours)
+
+
+@app.get("/ui/timeline")
+def ui_timeline(request: Request, hours: int = 72):
+    """Serving route for the frontend timeline.
+
+    Returns the day's calendar events, each annotated with `kairos: bool` (True
+    for agent-created focus blocks, detected via the existing clutch-marker
+    filter). UI-only and read-only — it does NOT feed Gemini, so it never changes
+    agent behavior (unlike build_snapshot, which is left untouched). Window runs
+    from local midnight today to now + `hours`, so the full current day shows.
+    """
+    if hours < 1 or hours > 24 * 30:
+        raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
+    sub = request.cookies.get(UID_COOKIE)
+    data = load_user(sub) if sub else None
+    if not data:
+        raise HTTPException(status_code=401, detail="Not logged in. Visit /login first.")
+
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+
+    tz = ZoneInfo(get_prefs(data)["work_tz"])
+    now_local = datetime.now(tz)
+    start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    time_min = start.isoformat()
+    time_max = (now_local + timedelta(hours=hours)).isoformat()
+
+    events = _list_events(session, time_min, time_max)
+    kairos_ids = {e.get("id") for e in _list_clutch_events(session, time_min, time_max)}
+    for ev in events:
+        ev["kairos"] = ev.get("id") in kairos_ids
+
+    return {
+        "now": now_local.isoformat(),
+        "timezone": str(tz),
+        "window": {"start": time_min, "end": time_max},
+        "events": events,
+    }
 
 
 # --- Gemini agent loop (read / propose only; no writes this build) ------------

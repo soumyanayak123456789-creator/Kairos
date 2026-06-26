@@ -1,4 +1,4 @@
-# Clutch — The Last-Minute Life Saver
+# Kairos — The Last-Minute Life Saver
 
 *An AI productivity companion that proactively plans, prioritizes, and autonomously acts so you finish before the deadline — not a reminder app.*
 
@@ -24,7 +24,7 @@
 
 ## 2. Solution overview (one paragraph)
 
-Clutch is a proactive agent that takes a stated goal ("finish the slide deck by Friday 5pm"), uses Gemini to **break it into time-estimated subtasks** (stored in Firestore), reads your calendar's free/busy, and **autonomously books focus blocks** on your real Google Calendar to guarantee the work fits before the deadline. It runs on a schedule (and on key events), so when a new meeting collides with your plan or a task slips, it **re-plans and rebooks on its own**, then shows you a one-line receipt of what it changed with an undo. It acts by default on your own planning surface (reversible) and asks first only for anything outbound or irreversible. That re-plan-under-pressure behavior — "the save" — is the product's reason to exist and its core differentiator.
+Kairos is a proactive agent that takes a stated goal ("finish the slide deck by Friday 5pm"), uses Gemini to **break it into time-estimated subtasks** (stored in Firestore), reads your calendar's free/busy, and **autonomously books focus blocks** on your real Google Calendar to guarantee the work fits before the deadline. It runs on a schedule (and on key events), so when a new meeting collides with your plan or a task slips, it **re-plans and rebooks on its own**, then shows you a one-line receipt of what it changed with an undo. It acts by default on your own planning surface (reversible) and asks first only for anything outbound or irreversible. That re-plan-under-pressure behavior — "the save" — is the product's reason to exist and its core differentiator.
 
 ---
 
@@ -52,7 +52,7 @@ This split is itself an Agentic-Depth argument: judgment about *when* autonomy i
 
 ### Proactive trigger
 - **Production:** **Cloud Scheduler** fires the agent on a cron (morning planning run + periodic checks). Buildable directly via `gcloud scheduler jobs create http` hitting an authenticated Cloud Run endpoint, using stored OAuth refresh tokens. True background proactivity is in scope.
-- **Demo & event-driven:** a synchronous "Run agent now" trigger so "the save" is watchable live in 3 minutes — *inject a conflicting meeting → watch Clutch rebook.* Primary demo mechanism; needs only in-session tokens, so it de-risks the demo regardless of the background-token work.
+- **Demo & event-driven:** a synchronous "Run agent now" trigger so "the save" is watchable live in 3 minutes — *inject a conflicting meeting → watch Kairos rebook.* Primary demo mechanism; needs only in-session tokens, so it de-risks the demo regardless of the background-token work.
 
 ---
 
@@ -129,7 +129,7 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 
 ## 6. Google technologies utilized (explicit)
 
-| Technology | How Clutch uses it | Status |
+| Technology | How Kairos uses it | Status |
 |------------|--------------------|--------|
 | **Gemini via Vertex AI — function calling** | The brain. Plans, prioritizes, emits structured tool calls driving every autonomous action, and composes the **Lane B rescue draft** (confirm-first, never sent). Accessed through **Vertex AI over ADC** (bills the GCP project), models `gemini-2.5-flash` + `gemini-2.5-flash-lite` fallback. | **IMPLEMENTED**; Vertex AI on project credit, **not** an AI Studio API key |
 | **Google Calendar API** | `freebusy.query` to find open time; `events.insert` to book focus blocks; `events.patch` to rebook; `events.delete` for undo. The autonomous-action surface. | **IMPLEMENTED**; OAuth scopes `calendar.events` + `calendar.freebusy` |
@@ -146,7 +146,7 @@ This is a substantial, genuine Google footprint — Gemini + Calendar + Cloud Ru
 
 ## 7. UI / screens
 
-1. **Today / Command screen (home).** "Clutch is on it" status + the agent's **receipt feed** ("Booked 2–4pm for deck · Undo"). Today's timeline (agent-made vs. user-made blocks color-coded). A prominent **"Run agent now"** button.
+1. **Today / Command screen (home).** "Kairos is on it" status + the agent's **receipt feed** ("Booked 2–4pm for deck · Undo"). Today's timeline (agent-made vs. user-made blocks color-coded). A prominent **"Run agent now"** button.
 2. **Goal capture.** One input ("What needs to get done, and by when?") with a mic button (stretch S2). On submit → subtasks stream in → "Scheduled ✓".
 3. **The Save (conflict) view.** Before/after schedule diff with the agent's one-line reasoning and **Undo / Keep**.
 4. **Priority queue.** Ranked "what to do now" list, each item showing why (deadline + effort).
@@ -237,7 +237,7 @@ Self-scores are a sanity check, not an objective measure. The Tasks→Firestore 
 - Batch Firestore writes; don't write per tick.
 - Verify each Google API call against the real test account; don't assume API shapes — check docs.
 
-**Demo-day check:** the live "save" runs on the synchronous trigger without depending on the background cron. Inject a conflicting meeting → watch Clutch rebook → show receipt + Undo.
+**Demo-day check:** the live "save" runs on the synchronous trigger without depending on the background cron. Inject a conflicting meeting → watch Kairos rebook → show receipt + Undo.
 
 ---
 

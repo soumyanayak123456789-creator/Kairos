@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kairos — The Last-Minute Life Saver</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg:        #080b11;
+    --bg-2:      #0b1019;
+    --surface:   #111824;
+    --surface-2: #161f2e;
+    --surface-3: #1d2838;
+    --border:    rgba(255,255,255,0.07);
+    --border-2:  rgba(255,255,255,0.12);
+    --text:      #e8eef6;
+    --text-dim:  #94a3b8;
+    --text-faint:#64748b;
+    --accent:    #2dd4bf;   /* teal */
+    --accent-2:  #38bdf8;   /* cyan/blue */
+    --accent-soft: rgba(45,212,191,0.12);
+    --accent-line: rgba(45,212,191,0.45);
+    --warn:      #fbbf24;
+    --warn-soft: rgba(251,191,36,0.12);
+    --danger:    #f87171;
+    --danger-soft: rgba(248,113,113,0.12);
+    --radius:    16px;
+    --radius-sm: 11px;
+    --shadow:    0 18px 50px -20px rgba(0,0,0,0.7);
+    --grad:      linear-gradient(120deg, var(--accent), var(--accent-2));
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: radial-gradient(1100px 600px at 80% -10%, rgba(56,189,248,0.10), transparent 60%),
+                radial-gradient(900px 500px at 0% 0%, rgba(45,212,191,0.08), transparent 55%),
+                var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  ::selection { background: rgba(45,212,191,0.3); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 22px 80px; }
+
+  /* ---------- Header ---------- */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 22px 0 18px; flex-wrap: wrap;
+  }
+  .brand { display: flex; align-items: center; gap: 13px; }
+  .brand .mark { width: 40px; height: 40px; flex: none; filter: drop-shadow(0 4px 14px rgba(45,212,191,0.35)); }
+  .brand .name {
+    font-size: 25px; font-weight: 800; letter-spacing: -0.5px;
+    background: var(--grad); -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .brand .tag { font-size: 12.5px; color: var(--text-dim); margin-top: -2px; font-weight: 500; }
+
+  .auth { display: flex; align-items: center; gap: 10px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    padding: 8px 13px; border-radius: 999px; font-size: 13px; color: var(--text-dim);
+  }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .chip strong { color: var(--text); font-weight: 600; }
+
+  /* ---------- Buttons ---------- */
+  button { font-family: inherit; cursor: pointer; border: none; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+    padding: 12px 20px; border-radius: 12px; font-size: 14.5px; font-weight: 600;
+    color: #06231f; background: var(--grad); transition: transform .12s ease, box-shadow .2s ease, opacity .2s;
+    box-shadow: 0 8px 24px -8px rgba(45,212,191,0.55);
+  }
+  .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 30px -8px rgba(45,212,191,0.7); }
+  .btn:active:not(:disabled) { transform: translateY(0); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.ghost {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2);
+    box-shadow: none; font-weight: 500;
+  }
+  .btn.ghost:hover:not(:disabled) { border-color: var(--accent-line); color: #fff; }
+  .btn.danger { background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(248,113,113,0.3); box-shadow: none; }
+  .btn.danger:hover:not(:disabled) { background: rgba(248,113,113,0.2); }
+  .btn.sm { padding: 8px 14px; font-size: 13px; border-radius: 10px; }
+
+  /* ---------- Cards ---------- */
+  .card {
+    background: linear-gradient(180deg, var(--surface), var(--bg-2));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px; box-shadow: var(--shadow);
+  }
+  .card + .card { margin-top: 18px; }
+  .section-title { font-size: 13px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--text-faint); margin: 0 0 14px; }
+
+  /* ---------- Command card ---------- */
+  .command .lead { font-size: 19px; font-weight: 600; letter-spacing: -0.3px; margin: 0 0 4px; }
+  .command .sub  { color: var(--text-dim); font-size: 14px; margin: 0 0 20px; }
+  .field-row { display: grid; grid-template-columns: 1fr 230px; gap: 14px; align-items: end; }
+  .field { display: flex; flex-direction: column; gap: 7px; }
+  .field label { font-size: 12.5px; color: var(--text-dim); font-weight: 600; letter-spacing: .2px; }
+  .input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border-2); color: var(--text);
+    padding: 13px 15px; border-radius: 12px; font-size: 15px; font-family: inherit; transition: border-color .15s, box-shadow .15s;
+  }
+  .input::placeholder { color: var(--text-faint); }
+  .input:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+  input[type="datetime-local"].input { color-scheme: dark; }
+  .run-row { margin-top: 18px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .run-row .btn { font-size: 15px; padding: 14px 26px; }
+  .run-hint { color: var(--text-faint); font-size: 12.5px; }
+
+  /* ---------- Working / agent loop ---------- */
+  #working[hidden], #results[hidden], .hidden { display: none !important; }
+  .work-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .pulse { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); position: relative; }
+  .pulse::after { content:""; position:absolute; inset:-6px; border-radius:50%; border:2px solid var(--accent); animation: ring 1.4s ease-out infinite; }
+  @keyframes ring { 0% { transform: scale(.6); opacity: .9; } 100% { transform: scale(1.7); opacity: 0; } }
+  .work-head .t { font-weight: 600; font-size: 16px; }
+  .steps { display: flex; flex-direction: column; gap: 4px; }
+  .step { display: flex; align-items: center; gap: 13px; padding: 11px 12px; border-radius: 11px; color: var(--text-faint); transition: all .3s; }
+  .step .ic { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--border-2); flex: none; display: grid; place-items: center; font-size: 12px; transition: all .3s; }
+  .step.active { color: var(--text); background: var(--accent-soft); }
+  .step.active .ic { border-color: var(--accent); color: var(--accent); animation: spin 1s linear infinite; border-right-color: transparent; }
+  .step.done { color: var(--text-dim); }
+  .step.done .ic { border-color: var(--accent); background: var(--accent); color: #06231f; animation: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---------- Receipts ---------- */
+  .receipt-summary {
+    background: var(--accent-soft); border: 1px solid var(--accent-line);
+    border-radius: var(--radius-sm); padding: 16px 18px; font-size: 14.5px; color: var(--text);
+    margin-bottom: 16px; display: flex; gap: 12px;
+  }
+  .receipt-summary .spark { color: var(--accent); flex: none; font-size: 18px; }
+  .receipts { display: flex; flex-direction: column; gap: 9px; }
+  .receipt {
+    display: flex; align-items: center; gap: 12px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 15px; font-size: 14px;
+  }
+  .receipt .ico { font-size: 16px; flex: none; }
+  .receipt .meta { color: var(--text-faint); font-size: 12.5px; margin-top: 2px; }
+  .receipt .grow { flex: 1; min-width: 0; }
+
+  .banner { border-radius: var(--radius-sm); padding: 13px 16px; font-size: 14px; display: flex; gap: 11px; align-items: flex-start; margin-bottom: 10px; }
+  .banner.warn { background: var(--warn-soft); border: 1px solid rgba(251,191,36,0.3); color: #fde68a; }
+  .banner.info { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim); }
+
+  /* ---------- Timeline ---------- */
+  .tl-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+  .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--text-dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .legend .sw { width: 11px; height: 11px; border-radius: 3px; }
+  .legend .sw.k { background: var(--grad); }
+  .legend .sw.u { background: var(--surface-3); border: 1px solid var(--border-2); }
+
+  .day-group { margin-bottom: 18px; }
+  .day-label { font-size: 12.5px; font-weight: 700; letter-spacing: .5px; color: var(--text-dim); text-transform: uppercase; padding: 0 2px 9px; }
+  .ev {
+    display: grid; grid-template-columns: 86px 1fr auto; gap: 14px; align-items: center;
+    padding: 13px 15px; border-radius: 12px; background: var(--surface-2);
+    border: 1px solid var(--border); margin-bottom: 8px; position: relative;
+  }
+  .ev .time { font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; line-height: 1.35; }
+  .ev .title { font-size: 14.5px; font-weight: 500; }
+  .ev .badge { font-size: 11px; font-weight: 700; letter-spacing: .4px; padding: 4px 9px; border-radius: 999px; white-space: nowrap; }
+  .ev.user .badge { background: var(--surface-3); color: var(--text-faint); }
+  .ev.kairos {
+    background: linear-gradient(100deg, var(--accent-soft), rgba(56,189,248,0.06));
+    border-color: var(--accent-line);
+    box-shadow: inset 3px 0 0 var(--accent), 0 6px 22px -14px rgba(45,212,191,0.8);
+  }
+  .ev.kairos .title { color: #fff; }
+  .ev.kairos .time { color: var(--accent); }
+  .ev.kairos .badge { background: var(--grad); color: #06231f; }
+  .ev.kairos .title::before { content: "✦ "; color: var(--accent); }
+
+  /* ---------- Drafts (Lane B) ---------- */
+  .draft { background: var(--surface-2); border: 1px solid var(--border-2); border-radius: var(--radius-sm); padding: 17px 18px; margin-bottom: 13px; }
+  .draft-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
+  .draft-status { font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; }
+  .draft-status.proposed { background: var(--warn-soft); color: var(--warn); }
+  .draft-status.confirmed { background: var(--accent-soft); color: var(--accent); }
+  .draft .to { font-size: 12.5px; color: var(--text-faint); }
+  .draft .subject { font-weight: 600; font-size: 15px; margin: 2px 0 8px; }
+  .draft .body { white-space: pre-wrap; font-size: 13.5px; color: var(--text-dim); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; max-height: 220px; overflow: auto; }
+  .draft .nosend { font-size: 12px; color: var(--text-faint); margin: 11px 0 0; display: flex; align-items: center; gap: 7px; }
+  .draft-actions { display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap; }
+  .edit-form { margin-top: 13px; display: none; flex-direction: column; gap: 10px; }
+  .edit-form.open { display: flex; }
+  .edit-form textarea.input { resize: vertical; min-height: 110px; font-size: 13.5px; }
+
+  .empty { text-align: center; color: var(--text-faint); padding: 30px 16px; font-size: 14px; }
+  .muted { color: var(--text-dim); }
+
+  /* ---------- Footer controls ---------- */
+  .footer-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 22px; flex-wrap: wrap; }
+  .footer-bar .note { font-size: 12.5px; color: var(--text-faint); max-width: 540px; }
+
+  /* ---------- Toast ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: var(--surface-3); border: 1px solid var(--border-2); color: var(--text);
+    padding: 13px 20px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow);
+    opacity: 0; pointer-events: none; transition: all .25s ease; z-index: 50; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.err { border-color: rgba(248,113,113,0.5); }
+
+  /* ---------- Connect gate ---------- */
+  .gate { text-align: center; padding: 40px 20px; }
+  .gate h2 { font-size: 22px; margin: 0 0 8px; letter-spacing: -0.4px; }
+  .gate p { color: var(--text-dim); margin: 0 0 22px; font-size: 14.5px; }
+
+  @media (max-width: 680px) {
+    .field-row { grid-template-columns: 1fr; }
+    .ev { grid-template-columns: 72px 1fr; }
+    .ev .badge { grid-column: 2; justify-self: start; }
+    header { padding-bottom: 10px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="kg" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#2dd4bf"/><stop offset="1" stop-color="#38bdf8"/>
+          </linearGradient>
+        </defs>
+        <circle cx="16" cy="16" r="13" stroke="url(#kg)" stroke-width="2.4"/>
+        <path d="M17.5 7.5 L10.5 17.5 H15.5 L14.5 24.5 L21.5 14 H16 Z" fill="url(#kg)"/>
+      </svg>
+      <div>
+        <div class="name">Kairos</div>
+        <div class="tag">The decisive moment to act</div>
+      </div>
+    </div>
+    <div class="auth" id="auth"><!-- filled by JS --></div>
+  </header>
+
+  <!-- Connect gate (logged out) -->
+  <section class="card gate" id="gate" hidden>
+    <h2>Your last-minute life saver</h2>
+    <p>Kairos reads your calendar, plans the work, and books focus blocks so you finish before the deadline — autonomously.</p>
+    <button class="btn" id="gate-connect">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1h-9.18v2.92h5.27c-.23 1.4-1.6 4.1-5.27 4.1-3.17 0-5.76-2.62-5.76-5.86s2.59-5.86 5.76-5.86c1.81 0 3.02.77 3.71 1.43l2.53-2.44C18.9 3.4 16.78 2.4 14.17 2.4 9.06 2.4 4.92 6.54 4.92 11.66s4.14 9.26 9.25 9.26c5.34 0 8.88-3.75 8.88-9.04 0-.6-.07-1.06-.16-1.52z"/></svg>
+      Connect Google Calendar
+    </button>
+  </section>
+
+  <!-- Command card (logged in) -->
+  <section class="card command" id="command" hidden>
+    <p class="lead">What needs to get done — and by when?</p>
+    <p class="sub">Kairos will decompose it, find your free time, and book the blocks itself.</p>
+    <div class="field-row">
+      <div class="field">
+        <label for="goal">Goal</label>
+        <input class="input" id="goal" type="text" placeholder="e.g. Finish the pitch deck for the investor meeting" />
+      </div>
+      <div class="field">
+        <label for="deadline">Deadline</label>
+        <input class="input" id="deadline" type="datetime-local" />
+      </div>
+    </div>
+    <div class="run-row">
+      <button class="btn" id="run">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Run Kairos
+      </button>
+      <span class="run-hint">Acts on your real calendar · everything is reversible</span>
+    </div>
+  </section>
+
+  <!-- Working state -->
+  <section class="card" id="working" hidden>
+    <div class="work-head"><span class="pulse"></span><span class="t">Kairos is on it…</span></div>
+    <div class="steps" id="steps">
+      <div class="step" data-i="0"><span class="ic">1</span><span>Perceiving your calendar &amp; free time</span></div>
+      <div class="step" data-i="1"><span class="ic">2</span><span>Weighing time remaining vs. work remaining</span></div>
+      <div class="step" data-i="2"><span class="ic">3</span><span>Planning focus blocks before the deadline</span></div>
+      <div class="step" data-i="3"><span class="ic">4</span><span>Booking your schedule</span></div>
+    </div>
+  </section>
+
+  <!-- Results -->
+  <section id="results" hidden>
+    <div class="card" id="receipt-card"></div>
+    <div class="card" id="timeline-card"></div>
+    <div class="card" id="drafts-card" hidden></div>
+  </section>
+
+  <!-- Footer controls -->
+  <div class="footer-bar" id="footer" hidden>
+    <div class="note">Kairos only ever creates clearly-marked focus blocks and never touches your own events. Use “Undo all” to reset to a clean slate for a fresh demo.</div>
+    <button class="btn danger sm" id="undo-all">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62A7.5 7.5 0 0 1 19.78 14h2.07A9.5 9.5 0 0 0 12.5 8z"/></svg>
+      Undo all
+    </button>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+// ---------- tiny API helper (never surfaces raw JSON) ----------
+async function api(path, opts = {}) {
+  let res;
+  try {
+    res = await fetch(path, { credentials: "same-origin", ...opts });
+  } catch (e) {
+    throw new Error("Couldn't reach the server. Is the app running?");
+  }
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+  if (!res.ok) {
+    let detail = data && (data.detail ?? data.error);
+    if (detail && typeof detail === "object") detail = detail.error || JSON.stringify(detail);
+    const err = new Error(detail || `Something went wrong (${res.status}).`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+// ---------- elements ----------
+const el = (id) => document.getElementById(id);
+const authEl = el("auth"), gateEl = el("gate"), commandEl = el("command");
+const workingEl = el("working"), resultsEl = el("results"), footerEl = el("footer");
+const goalEl = el("goal"), deadlineEl = el("deadline"), runBtn = el("run");
+
+// ---------- toast ----------
+let toastTimer = null;
+function toast(msg, isErr = false) {
+  const t = el("toast");
+  t.textContent = msg;
+  t.classList.toggle("err", isErr);
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 5200 : 3400);
+}
+
+// ---------- formatting ----------
+function fmtDay(d) {
+  return d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+function fmtTime(d) {
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function fmtRange(startIso, endIso) {
+  try {
+    const s = new Date(startIso), e = new Date(endIso);
+    return `${fmtDay(s)} · ${fmtTime(s)}–${fmtTime(e)}`;
+  } catch { return `${startIso} – ${endIso}`; }
+}
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ---------- auth / view state ----------
+async function checkAuth() {
+  try {
+    const me = await api("/me");
+    if (me && me.logged_in) return setLoggedIn(me);
+  } catch (e) { /* fall through to logged-out */ }
+  setLoggedOut();
+}
+
+function setLoggedOut() {
+  authEl.innerHTML = `<button class="btn sm" id="hdr-connect">Connect Google Calendar</button>`;
+  el("hdr-connect").onclick = () => (window.location.href = "/login");
+  gateEl.hidden = false;
+  commandEl.hidden = true;
+  resultsEl.hidden = true;
+  footerEl.hidden = true;
+  workingEl.hidden = true;
+}
+
+function setLoggedIn(me) {
+  authEl.innerHTML = `
+    <span class="chip"><span class="dot"></span><strong>${esc(me.name || me.email || "Connected")}</strong></span>
+    <button class="btn ghost sm" id="hdr-reconnect">Re-connect</button>`;
+  el("hdr-reconnect").onclick = () => (window.location.href = "/login");
+  gateEl.hidden = true;
+  commandEl.hidden = false;
+  footerEl.hidden = false;
+  // Default deadline: tomorrow 18:00 local.
+  if (!deadlineEl.value) {
+    const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0);
+    const pad = (n) => String(n).padStart(2, "0");
+    deadlineEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  loadTimeline();   // show the current calendar right away
+}
+
+el("gate-connect").onclick = () => (window.location.href = "/login");
+
+// ---------- working animation ----------
+let workTimer = null;
+function setStep(active) {
+  document.querySelectorAll("#steps .step").forEach((s) => {
+    const i = +s.dataset.i;
+    s.classList.toggle("active", i === active);
+    s.classList.toggle("done", i < active);
+    if (i < active) s.querySelector(".ic").textContent = "✓";
+  });
+}
+function showWorking() {
+  resultsEl.hidden = true;
+  workingEl.hidden = false;
+  let i = 0; setStep(0);
+  workTimer = setInterval(() => { i = Math.min(i + 1, 3); setStep(i); }, 1500);
+}
+function finishWorking() {
+  clearInterval(workTimer); workTimer = null;
+  document.querySelectorAll("#steps .step").forEach((s) => {
+    s.classList.remove("active"); s.classList.add("done"); s.querySelector(".ic").textContent = "✓";
+  });
+  workingEl.hidden = true;
+}
+
+// ---------- run the agent ----------
+async function runKairos() {
+  const goal = goalEl.value.trim();
+  if (!goal) { toast("Tell Kairos what needs to get done first.", true); goalEl.focus(); return; }
+  const deadline = deadlineEl.value; // local "YYYY-MM-DDTHH:mm" (naive => server treats as local tz)
+
+  let hours = 72;
+  if (deadline) {
+    const diffH = (new Date(deadline) - new Date()) / 36e5;
+    if (diffH > 0) hours = Math.min(720, Math.max(48, Math.ceil(diffH) + 12));
+  }
+
+  runBtn.disabled = true;
+  showWorking();
+  try {
+    const p = new URLSearchParams({ hours: String(hours), goal });
+    if (deadline) p.set("deadline", deadline);
+    const result = await api("/agent/run?" + p.toString());
+    finishWorking();
+    renderResult(result);
+    resultsEl.hidden = false;
+    await loadTimeline(result);
+    await loadDrafts();
+  } catch (e) {
+    finishWorking();
+    renderError(e.message);
+    resultsEl.hidden = false;
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+runBtn.onclick = runKairos;
+goalEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runKairos(); });
+
+// ---------- render the agent's receipt ----------
+function receiptLine(rec) {
+  const name = rec.name, r = rec.result || {}, a = rec.args || {};
+  if (name === "create_calendar_event") {
+    return { ico: "📅", main: `Booked “${esc(r.title || a.title || "Focus block")}”`,
+             meta: fmtRange(r.start || a.start, r.end || a.end) + (r.adjusted ? " · adjusted to working hours" : "") };
+  }
+  if (name === "reschedule_event") {
+    return { ico: "🔀", main: "Moved an event to a new time",
+             meta: fmtRange(r.new_start || a.new_start, r.new_end || a.new_end) + (a.reason ? ` · ${esc(a.reason)}` : "") };
+  }
+  if (name === "break_down_task") {
+    const n = (r.created_task_ids || r.subtasks || []).length;
+    return { ico: "🧩", main: `Broke “${esc(a.goal || "the goal")}” into ${n} subtask${n === 1 ? "" : "s"}`, meta: "saved to your plan" };
+  }
+  if (name === "upsert_task") return { ico: "✓", main: `Updated task “${esc(a.title || "")}”`, meta: a.status ? `status: ${esc(a.status)}` : "" };
+  if (name === "reprioritize") return { ico: "↕", main: `Reprioritized ${(a.ranked_task_ids || []).length} tasks`, meta: "" };
+  return { ico: "•", main: esc(name), meta: "" };
+}
+
+function renderResult(result) {
+  const card = el("receipt-card");
+  const actions = result.executed_actions || [];
+  const created = result.events_created || 0;
+
+  let html = `<p class="section-title">What Kairos did</p>`;
+
+  const summary = result.final_text && String(result.final_text).trim();
+  if (summary) {
+    html += `<div class="receipt-summary"><span class="spark">✦</span><div>${esc(summary)}</div></div>`;
+  }
+
+  if (result.halted) {
+    html += `<div class="banner warn"><span>⚠️</span><div>Kairos hit its per-run safety cap (${created} blocks) and stopped early. Run again to continue, or adjust the goal.</div></div>`;
+  }
+
+  (result.notifications || []).forEach((n) => {
+    const cls = n.urgency === "high" ? "warn" : "info";
+    const ic = n.urgency === "high" ? "⚠️" : "ℹ️";
+    if (n.message) html += `<div class="banner ${cls}"><span>${ic}</span><div>${esc(n.message)}</div></div>`;
+  });
+
+  if (actions.length) {
+    html += `<div class="receipts">`;
+    actions.forEach((rec) => {
+      const r = receiptLine(rec);
+      html += `<div class="receipt"><span class="ico">${r.ico}</span><div class="grow"><div>${r.main}</div>${r.meta ? `<div class="meta">${r.meta}</div>` : ""}</div></div>`;
+    });
+    html += `</div>`;
+  } else if (!summary) {
+    html += `<div class="empty">Kairos reviewed your schedule and didn't need to make changes.</div>`;
+  }
+
+  card.innerHTML = html;
+  card.hidden = false;
+}
+
+function renderError(msg) {
+  el("receipt-card").innerHTML =
+    `<p class="section-title">What Kairos did</p>
+     <div class="banner warn"><span>⚠️</span><div>${esc(msg)}</div></div>
+     <div class="muted" style="font-size:13px">Please try again. If this keeps happening, re-connect your Google account from the header.</div>`;
+  el("receipt-card").hidden = false;
+  el("timeline-card").hidden = true;
+  el("drafts-card").hidden = true;
+}
+
+// ---------- timeline ----------
+async function loadTimeline(runResult) {
+  const card = el("timeline-card");
+  try {
+    const data = await api("/ui/timeline?hours=168");
+    const events = data.events || [];
+
+    // Belt-and-suspenders: also flag any event just created this run.
+    if (runResult) {
+      const fresh = new Set((runResult.executed_actions || [])
+        .filter((a) => a.name === "create_calendar_event")
+        .map((a) => a.result && a.result.event_id).filter(Boolean));
+      events.forEach((ev) => { if (fresh.has(ev.id)) ev.kairos = true; });
+    }
+
+    let html = `
+      <div class="tl-head">
+        <p class="section-title" style="margin:0">Your schedule</p>
+        <div class="legend">
+          <span><span class="sw k"></span>Kairos block</span>
+          <span><span class="sw u"></span>Your event</span>
+        </div>
+      </div>`;
+
+    if (!events.length) {
+      html += `<div class="empty">No events in the window yet. Run Kairos to plan and book your focus blocks.</div>`;
+      card.innerHTML = html; card.hidden = false; resultsEl.hidden = false; return;
+    }
+
+    // group by local day
+    const groups = {};
+    events.forEach((ev) => {
+      const key = new Date(ev.start).toDateString();
+      (groups[key] = groups[key] || []).push(ev);
+    });
+    Object.keys(groups).sort((a, b) => new Date(a) - new Date(b)).forEach((key) => {
+      const list = groups[key].sort((a, b) => new Date(a.start) - new Date(b.start));
+      html += `<div class="day-group"><div class="day-label">${fmtDay(new Date(key))}</div>`;
+      list.forEach((ev) => {
+        const kairos = !!ev.kairos;
+        const time = ev.all_day ? "All day"
+          : `${fmtTime(new Date(ev.start))}<br>${fmtTime(new Date(ev.end))}`;
+        html += `
+          <div class="ev ${kairos ? "kairos" : "user"}">
+            <div class="time">${time}</div>
+            <div class="title">${esc(ev.summary || "(untitled)")}</div>
+            <div class="badge">${kairos ? "KAIROS" : "Your event"}</div>
+          </div>`;
+      });
+      html += `</div>`;
+    });
+
+    card.innerHTML = html;
+    card.hidden = false;
+    resultsEl.hidden = false;
+  } catch (e) {
+    card.innerHTML = `<p class="section-title">Your schedule</p><div class="banner warn"><span>⚠️</span><div>Couldn't load your timeline: ${esc(e.message)}</div></div>`;
+    card.hidden = false;
+  }
+}
+
+// ---------- drafts (Lane B) ----------
+async function loadDrafts() {
+  const card = el("drafts-card");
+  let data;
+  try { data = await api("/agent/drafts"); }
+  catch { card.hidden = true; return; }
+
+  const drafts = (data.drafts || []).filter((d) => d.status !== "dismissed");
+  if (!drafts.length) { card.hidden = true; card.innerHTML = ""; return; }
+
+  let html = `<p class="section-title">Rescue drafts · needs your call</p>
+    <div class="banner info" style="margin-bottom:14px"><span>🛟</span><div>A deadline looked at risk, so Kairos drafted a heads-up message. <strong>Nothing is ever sent</strong> — confirming only marks it approved for you to copy &amp; send yourself.</div></div>`;
+
+  drafts.forEach((d) => {
+    const proposed = d.status === "proposed";
+    html += `
+      <div class="draft" data-id="${esc(d.draft_id)}">
+        <div class="draft-top">
+          <span class="to">To: ${esc(d.recipient || "—")}</span>
+          <span class="draft-status ${esc(d.status)}">${proposed ? "Awaiting you" : "Approved"}</span>
+        </div>
+        <div class="subject">${esc(d.subject || "(no subject)")}</div>
+        <div class="body">${esc(d.body || "")}</div>
+        <p class="nosend">🔒 Draft only — Kairos has no send capability (no Gmail access).</p>
+        <div class="draft-actions">
+          ${proposed ? `<button class="btn sm" data-act="confirm">Confirm</button>` : ""}
+          <button class="btn ghost sm" data-act="edit">Edit</button>
+          <button class="btn ghost sm" data-act="dismiss">Dismiss</button>
+        </div>
+        <div class="edit-form">
+          <input class="input" data-f="recipient" placeholder="Recipient" value="${esc(d.recipient || "")}" />
+          <input class="input" data-f="subject" placeholder="Subject" value="${esc(d.subject || "")}" />
+          <textarea class="input" data-f="body" placeholder="Message body">${esc(d.body || "")}</textarea>
+          <div class="draft-actions">
+            <button class="btn sm" data-act="save">Save changes</button>
+            <button class="btn ghost sm" data-act="cancel">Cancel</button>
+          </div>
+        </div>
+      </div>`;
+  });
+
+  card.innerHTML = html;
+  card.hidden = false;
+  card.querySelectorAll(".draft").forEach(wireDraft);
+}
+
+function wireDraft(node) {
+  const id = node.dataset.id;
+  const form = node.querySelector(".edit-form");
+  const act = async (fn, busyMsg) => {
+    node.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try { await fn(); }
+    catch (e) { toast(e.message, true); node.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
+  };
+  node.querySelectorAll("[data-act]").forEach((btn) => {
+    btn.onclick = () => {
+      const a = btn.dataset.act;
+      if (a === "edit") { form.classList.add("open"); return; }
+      if (a === "cancel") { form.classList.remove("open"); return; }
+      if (a === "confirm") return act(async () => {
+        await api(`/agent/draft/${id}/confirm`, { method: "POST" });
+        toast("Draft approved — copy & send it yourself when ready.");
+        await loadDrafts();
+      });
+      if (a === "dismiss") return act(async () => {
+        await api(`/agent/draft/${id}/dismiss`, { method: "POST" });
+        toast("Draft dismissed.");
+        await loadDrafts();
+      });
+      if (a === "save") return act(async () => {
+        const payload = {};
+        form.querySelectorAll("[data-f]").forEach((f) => { if (f.value.trim()) payload[f.dataset.f] = f.value; });
+        await api(`/agent/draft/${id}/edit`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+        });
+        toast("Draft updated.");
+        await loadDrafts();
+      });
+    };
+  });
+}
+
+// ---------- undo all ----------
+el("undo-all").onclick = async () => {
+  if (!confirm("Remove all Kairos-created focus blocks and reset the plan? Your own calendar events are never touched.")) return;
+  const btn = el("undo-all");
+  btn.disabled = true;
+  try {
+    const r = await api("/agent/undo-all", { method: "POST" });
+    toast(`Reset done — removed ${r.events_deleted} Kairos block${r.events_deleted === 1 ? "" : "s"}, cleaned ${r.tasks_deleted} task${r.tasks_deleted === 1 ? "" : "s"}.`);
+    await loadTimeline();
+    await loadDrafts();
+    el("receipt-card").hidden = true;
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; }
+};
+
+// ---------- boot ----------
+checkAuth();
+</script>
+</body>
+</html>
