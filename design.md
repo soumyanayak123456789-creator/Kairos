@@ -46,7 +46,7 @@ Reversible and internal to the user's own planning surface, so they happen autom
 
 ### Human-in-the-loop boundary
 - **Lane A — auto-execute, no confirmation:** actions on the user's *own* reversible surface — `create_calendar_event`, `reschedule_event`, `break_down_task`, internal re-prioritization. Acts, then surfaces *"I moved your 3pm prep to 5pm because your dentist ran over — Undo."*
-- **Lane B — propose-and-confirm:** anything **outbound or irreversible** — `draft_message`, deleting events. Prepares it, waits for one tap.
+- **Lane B — propose-and-confirm (IMPLEMENTED for `draft_message`):** anything **outbound or irreversible**. On deadline-infeasibility the agent drafts a context-aware rescue/extension message (Gemini), persists it to Firestore (`drafts` subcollection), and surfaces it for the user to **confirm / edit / dismiss**. Confirm only **marks it approved (`sent=false`)** — there is **no send capability and no Gmail scope**, by design. (Event-deletion as a Lane B action is not yet built.)
 
 This split is itself an Agentic-Depth argument: judgment about *when* autonomy is appropriate.
 
@@ -66,7 +66,7 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 | 2 | **Autonomous schedule placement** | Reads free/busy, finds open slots, **creates Calendar focus blocks**. Books, not suggests. | Agentic Depth (core), Innovation | Gemini FC, Calendar API (`freebusy.query` + `events.insert`) | Medium |
 | 3 | **Re-plan on conflict — "the save"** | On collision/slip, **autonomously moves and rebooks** events and re-sequences subtasks, then reports. The money shot. | Agentic Depth, Innovation, Problem Solving | Calendar API (`events.patch`), Gemini loop | Medium–Hard |
 | 4 | **Triage & prioritize** | Ranks open subtasks by deadline pressure + effort and **commits "what to do now."** | Agentic Depth, Product Experience | Gemini FC, Firestore | Easy–Medium |
-| 5 | **Draft-the-rescue-message** *(Lane B, confirm)* | When a deadline can't be met, **drafts the heads-up message** for one-tap send. Draft-only. | Innovation, Product Experience | Gemini generation (no Gmail-send scope) | Easy |
+| 5 | **Draft-the-rescue-message** *(Lane B, confirm)* — **IMPLEMENTED** | When a deadline can't be met, **drafts a context-aware heads-up / extension message** and saves it for the user to **confirm / edit / dismiss**. Draft-only; never sent. | Innovation, Product Experience | Gemini generation (no Gmail-send scope) | **IMPLEMENTED** |
 | S1 | **Cloud Scheduler background cron** *(stretch #1)* | Agent runs unattended (morning planning run) with no user click. | Agentic Depth, Innovation | Cloud Scheduler + Cloud Run | Medium |
 | S2 | **Voice goal capture** *(stretch #2)* | Speak a goal; transcribed into feature 1's pipeline. | Product Experience, Innovation | Web Speech API (browser, free) | Easy–Medium |
 | S3 | **Commute-aware "leave now"** *(stretch #3)* | If a fixed event needs travel, auto-adjusts the surrounding schedule. | Innovation | Maps Routes/Places API (needs billing) | Medium |
@@ -116,10 +116,10 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 | `break_down_task` | `goal, deadline` → `subtasks[]` | Decompose goal; write subtasks to Firestore | Gemini + Firestore write — **CONFIRMED** |
 | `upsert_task` | `task_id?, title, due, effort, status` | Create/update/complete a subtask in Firestore | Firestore write — **CONFIRMED** (real timestamps, no date-only limit) |
 | `reprioritize` | `ranked_task_ids[]` | Commit new ordering / "now" pick in Firestore | Firestore write — **CONFIRMED** |
-| `draft_message` | `recipient, body` | Compose heads-up draft (Lane B, no send) | Internal (no Gmail scope) — **CONFIRMED** |
+| `draft_message` | `recipient, goal, unmet_portion, new_eta, subject?, body?` | Draft a rescue/extension message on infeasibility; persist to Firestore `drafts` (Lane B, confirm-first, never sent) | Gemini generation + Firestore (no Gmail scope) — **IMPLEMENTED** |
 | `notify_user` | `message, urgency` | Surface the agent's receipt/nudge | App-internal — **CONFIRMED** |
 
-**Implemented guards (Lane A).** `create_calendar_event` / `reschedule_event` call the live Calendar API; `break_down_task` / `upsert_task` / `reprioritize` write to Firestore. Each executed action writes an `action_log` record with reversal info, enabling single **undo** (`/agent/undo`, `/agent/undo/{id}`) and bulk **undo-all** (`/agent/undo-all`), which deletes **only `clutch`-marked events** (server-side `privateExtendedProperty` filter, re-checked per event) so the user's own events are never touched. `create_calendar_event` is deterministically constrained to **working hours** (08:00–22:00 Asia/Kolkata default; per-user prefs in Firestore via `/prefs`) and a **max 2h block**; `break_down_task` subtask due-dates are normalized to (now, deadline]. `draft_message` (Lane B) remains proposed-only; `notify_user` surfaces deadline-feasibility warnings. Scheduling block-sizing is effort-PROMPT-steered (not minute-accounted) — the hard guarantee is the ≤8-events/run cap.
+**Implemented guards (Lane A).** `create_calendar_event` / `reschedule_event` call the live Calendar API; `break_down_task` / `upsert_task` / `reprioritize` write to Firestore. Each executed action writes an `action_log` record with reversal info, enabling single **undo** (`/agent/undo`, `/agent/undo/{id}`) and bulk **undo-all** (`/agent/undo-all`), which deletes **only `clutch`-marked events** (server-side `privateExtendedProperty` filter, re-checked per event) so the user's own events are never touched. `create_calendar_event` is deterministically constrained to **working hours** (08:00–22:00 Asia/Kolkata default; per-user prefs in Firestore via `/prefs`) and a **max 2h block**; `break_down_task` subtask due-dates are normalized to (now, deadline]. `draft_message` (Lane B) now drafts a context-aware rescue/extension message on deadline-infeasibility and persists it to a Firestore `drafts` subcollection under a **confirm-first** flow (`GET /agent/drafts`; `POST /agent/draft/{id}/confirm|edit|dismiss`) — confirm only marks it approved (`sent=false`), with **no send capability and no Gmail scope**; `notify_user` surfaces deadline-feasibility warnings. Scheduling block-sizing is effort-PROMPT-steered (not minute-accounted) — the hard guarantee is the ≤8-events/run cap.
 
 > **Why Firestore for tasks, not Google Tasks:** Google Tasks' `due` field is date-only (the API discards time-of-day), it duplicates data already in Calendar (time blocks) and Firestore (plan ledger), and it adds an extra OAuth scope and moving part. Firestore gives full schema control, real timestamps, effort estimates, and lives next to the plan ledger. The only thing Google Tasks offered — visibility in the user's real Google Tasks app — is preserved as the optional one-way mirror (S4).
 
@@ -131,7 +131,7 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 
 | Technology | How Clutch uses it | Status |
 |------------|--------------------|--------|
-| **Gemini via Vertex AI — function calling** | The brain. Plans, prioritizes, emits structured tool calls driving every autonomous action. Accessed through **Vertex AI over ADC** (bills the GCP project), models `gemini-2.5-flash` + `gemini-2.5-flash-lite` fallback. | **IMPLEMENTED**; Vertex AI on project credit, **not** an AI Studio API key |
+| **Gemini via Vertex AI — function calling** | The brain. Plans, prioritizes, emits structured tool calls driving every autonomous action, and composes the **Lane B rescue draft** (confirm-first, never sent). Accessed through **Vertex AI over ADC** (bills the GCP project), models `gemini-2.5-flash` + `gemini-2.5-flash-lite` fallback. | **IMPLEMENTED**; Vertex AI on project credit, **not** an AI Studio API key |
 | **Google Calendar API** | `freebusy.query` to find open time; `events.insert` to book focus blocks; `events.patch` to rebook; `events.delete` for undo. The autonomous-action surface. | **IMPLEMENTED**; OAuth scopes `calendar.events` + `calendar.freebusy` |
 | **Cloud Run** | Hosts the app + agent loop. The GCP deploy target satisfying the requirement. | **CONFIRMED**; `gcloud run deploy` (skeleton deployed) |
 | **Firestore** | Source of truth: subtasks, action log, prefs, OAuth tokens (plan ledger + cursor planned). | **IMPLEMENTED**; provisioned + used directly (ADC) |
@@ -150,7 +150,7 @@ This is a substantial, genuine Google footprint — Gemini + Calendar + Cloud Ru
 2. **Goal capture.** One input ("What needs to get done, and by when?") with a mic button (stretch S2). On submit → subtasks stream in → "Scheduled ✓".
 3. **The Save (conflict) view.** Before/after schedule diff with the agent's one-line reasoning and **Undo / Keep**.
 4. **Priority queue.** Ranked "what to do now" list, each item showing why (deadline + effort).
-5. **Confirm tray (Lane B).** Slide-up card for outbound drafts: **Send / Edit / Dismiss**.
+5. **Confirm tray (Lane B).** Slide-up card for outbound drafts: **Confirm / Edit / Dismiss** (confirm marks approved only — never sends; no Gmail scope).
 6. **Connect account / onboarding.** Google OAuth consent for Calendar.
 
 Visual tone: calm, single-accent, "the assistant already handled it" — receipts over alarms.
@@ -160,7 +160,7 @@ Visual tone: calm, single-accent, "the assistant already handled it" — receipt
 ## 8. Scope cut line — MVP vs stretch (June 29)
 
 **MVP (the demoable spine — must work live against a sandbox Google account):**
-- Features **1, 2, 3, 4** + **5** (draft-the-rescue, cheap pure Gemini).
+- Features **1, 2, 3, 4** + **5** (draft-the-rescue — **IMPLEMENTED**: confirm-first, never sent).
 - The loop, Gemini function-calling, **Firestore as task + state store**, **direct OAuth 2.0** for Calendar on a single test account, a Cloud Run deploy, and a **synchronous trigger** for the live "save."
 
 **Stretch — build ONLY after the spine is demo-proven (~June 27), in this fixed order:**
@@ -185,6 +185,8 @@ Visual tone: calm, single-accent, "the assistant already handled it" — receipt
 8. **Dropping Google Tasks slightly reduces the raw Google-API count.** Mitigation: the remaining Google footprint (Gemini + Calendar + Cloud Run + Firestore + Scheduler) is still strong and *genuine*; the optional S4 mirror can add Tasks back if a higher count is wanted. Net: fewer date-only headaches, simpler MVP.
 9. **Gemini billing — RESOLVED.** Gemini runs via **Vertex AI over ADC**, billing the GCP project's trial credit (no AI Studio prepay / API key). Region defaults to `global`; `asia-south1` availability for `gemini-2.5-flash` is **unverified**, which is why `global` is the default (`VERTEX_LOCATION` overrides it).
 10. **Known imperfection (scheduling).** Block sizing is **effort-PROMPT-steered**, not deterministically minute-accounted; the hard guarantee is the **≤8-events/run cap (halts)** plus `AGENT_MAX_ACTIONS=10`. A run can't exceed 8 blocks, but exact total-minutes ≈ sum-of-efforts is not enforced.
+11. **Rough edge (cosmetic).** Subtask `due` timestamps carry **microsecond precision** (e.g. `...:12.345678+05:30`) because they're derived from `datetime` arithmetic; harmless but ugly in API output. Not fixed — would just round/truncate to the minute.
+12. **Rough edge (past-deadline UX).** A deadline already **in the past** makes `break_down_task` return **empty subtasks**, surfacing a confusing *"couldn't break down the goal"* message instead of either gracefully drafting a rescue or clearly stating *"that deadline has already passed."* Not fixed yet; the right fix is an explicit past-deadline branch.
 
 ---
 

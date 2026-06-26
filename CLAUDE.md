@@ -38,7 +38,7 @@ tasks before deadlines (NOT passive reminders).
   save"). Highest-friction tool but irreplaceable; pay the OAuth cost.
 - Cloud Run, Firestore, Gemini, Cloud Scheduler all kept (load-bearing).
 
-## Implemented so far (build steps 1–6)
+## Implemented so far (build steps 1–7)
 - Cloud Run hello-world deploy path proven (step 1).
 - Direct Google OAuth 2.0 login (`/login`, `/oauth2callback`, `/me`); PKCE
   verifier keyed by OAuth `state` (works across instances).
@@ -49,8 +49,13 @@ tasks before deadlines (NOT passive reminders).
 - Gemini function-calling agent loop (`/agent/run`, `/agent/plan`) on **Vertex AI**;
   deterministic pre-ranker; step cap 16.
 - Lane A executed (create/reschedule events; `break_down_task`/`upsert_task`/
-  `reprioritize` → Firestore). Lane B (`draft_message`) proposed only; `notify_user`
-  surfaces deadline-feasibility warnings.
+  `reprioritize` → Firestore). `notify_user` surfaces deadline-feasibility warnings.
+- Lane B IMPLEMENTED (`draft_message`, confirm-first): on deadline-infeasibility
+  the agent drafts a context-aware rescue/extension message (Gemini), persists it
+  to a Firestore `drafts` subcollection, and exposes `GET /agent/drafts` +
+  `POST /agent/draft/{id}/confirm|edit|dismiss`. Confirm only MARKS it approved
+  (`sent=false`); edit reopens to `proposed`; dismiss marks dismissed. There is
+  NO send capability and NO Gmail scope — by design.
 - Action log + single undo (`/agent/undo`, `/agent/undo/{id}`) and bulk
   `/agent/undo-all` (deletes ONLY `clutch`-marked events — never the user's own).
 - Guards: deterministic working-hours enforcement (08:00–22:00 Asia/Kolkata
