@@ -99,6 +99,50 @@
   [hidden] { display: none !important; }
   .hidden { display: none !important; }
 
+  /* ============ Demo / guest mode (distinct accent + persistent banner) ======= */
+  [data-demo="1"] {
+    --accent:      #7c3aed;   /* violet — obviously NOT the live teal */
+    --accent-2:    #db2777;
+    --accent-ink:  #6d28d9;
+    --accent-soft: color-mix(in srgb, #7c3aed 14%, transparent);
+    --blue-soft:   color-mix(in srgb, #db2777 12%, transparent);
+    --grad:        linear-gradient(120deg, #7c3aed, #db2777);
+  }
+  [data-theme="dark"][data-demo="1"] { --accent-ink: #c4b5fd; }
+  #demo-banner {
+    position: sticky; top: 0; z-index: 60;
+    background: linear-gradient(120deg, #7c3aed, #db2777); color: #fff;
+    text-align: center; font-size: 13.5px; font-weight: 600; letter-spacing: .2px;
+    padding: 8px 14px; display: flex; align-items: center; justify-content: center; gap: 14px;
+  }
+  #demo-banner .demo-exit {
+    background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.5);
+    border-radius: 999px; padding: 2px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  #demo-banner .demo-exit:hover { background: rgba(255,255,255,.30); }
+  .chip.demo-chip { background: color-mix(in srgb, #7c3aed 22%, transparent); }
+  /* Landing-while-in-demo: inline notice + de-emphasized real-login CTA so a judge
+     never mistakes the demo landing for the live app. */
+  .hero-demo-note {
+    display: flex; align-items: flex-start; gap: 11px; max-width: 560px;
+    margin: 0 auto 22px; text-align: left; border-radius: 12px; padding: 12px 16px;
+    font-size: 14px; line-height: 1.5; color: var(--text);
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .hdn-badge { font-weight: 800; font-size: 12px; letter-spacing: .4px; color: var(--accent-ink); white-space: nowrap; padding-top: 2px; }
+  .hdn-exit {
+    background: var(--grad); color: #fff; border: none; border-radius: 999px;
+    padding: 1px 10px; font-size: 12.5px; font-weight: 700; cursor: pointer; vertical-align: baseline;
+  }
+  .hdn-exit:hover { filter: brightness(1.06); }
+  /* In demo, the real-login "Get started" is shown as a clearly secondary action. */
+  [data-demo="1"] #get-started {
+    background: transparent; color: var(--text-dim);
+    border: 1px solid var(--border-2); box-shadow: none;
+  }
+  [data-demo="1"] #get-started::after { content: " · real sign-in"; font-weight: 500; opacity: .7; }
+
   /* ============ Animated background (subtle floating blobs) ============ */
   .bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
   .blob {
@@ -552,6 +596,12 @@
 </head>
 <body>
 
+<!-- Demo / guest mode banner (shown only while in demo mode) -->
+<div id="demo-banner" hidden>
+  <span>▷ DEMO MODE — real Kairos AI planning on a sample calendar · nothing is saved or booked to a real calendar</span>
+  <button class="demo-exit" id="demo-banner-exit">Exit demo</button>
+</div>
+
 <!-- Subtle animated background -->
 <div class="bg" aria-hidden="true">
   <span class="blob b1"></span>
@@ -592,8 +642,16 @@
       <h1>KAIROS</h1>
       <p class="hook">Need help managing your schedule? Kairos has you covered.</p>
       <p class="sub">An AI that proactively plans, prioritizes, and books your time on Google Calendar — so you beat every deadline instead of racing it.</p>
+
+      <!-- Shown only while in demo mode (toggled by enterDemo/exitDemo) -->
+      <div class="hero-demo-note" id="hero-demo-note" hidden>
+        <span class="hdn-badge">▷ DEMO MODE</span>
+        <span>You're exploring the demo — nothing is saved or booked to a real calendar. “Get started” below begins <strong>real Google sign-in</strong>; <button type="button" class="hdn-exit" id="hero-demo-exit">Exit demo</button> first if you don't want that.</span>
+      </div>
+
       <div class="cta-row">
         <button class="btn lg" id="get-started">Get started</button>
+        <button class="btn ghost lg" id="hero-demo">▷ Try the demo</button>
         <button class="btn ghost lg" id="hero-about">Learn more</button>
       </div>
 
@@ -894,8 +952,9 @@ function showView(name, push = true, replace = false) {
   document.querySelectorAll(".navlink").forEach((b) =>
     b.classList.toggle("active", b.dataset.nav === name));
   // Re-validate auth whenever we enter an authenticated view, so the gate only
-  // ever shows when the user is genuinely logged out.
-  if (name === "app" || name === "approved") refreshAuth();
+  // ever shows when the user is genuinely logged out. (Skipped in demo mode —
+  // there's no real session and we must not bounce the guest to the gate.)
+  if (!DEMO.active && (name === "app" || name === "approved")) refreshAuth();
   try {
     if (replace) history.replaceState({ view: name }, "", "#" + name);
     else if (push) history.pushState({ view: name }, "", "#" + name);
@@ -907,7 +966,7 @@ window.addEventListener("popstate", (e) => {
 });
 // Back/forward restores from bfcache don't re-run boot — re-check auth so a still
 // logged-in user isn't shown the connect gate.
-window.addEventListener("pageshow", (e) => { if (e.persisted) refreshAuth(); });
+window.addEventListener("pageshow", (e) => { if (e.persisted && !DEMO.active) refreshAuth(); });
 
 el("brand-home").onclick = () => showView("landing");
 el("nav-home").onclick = () => showView("landing");
@@ -915,8 +974,15 @@ el("nav-about").onclick = () => showView("about");
 el("nav-approved").onclick = () => showView("approved");
 el("approved-back").onclick = () => showView("app");
 el("hero-about").onclick = () => showView("about");
-el("get-started").onclick = () => showView("app");
-el("about-cta").onclick = () => showView("app");
+// "Get started" always begins the REAL flow. If demo mode is active, leave it
+// first (clears the banner/accent/chip + restores real state) so it never routes
+// into the demo workspace — its label promises real sign-in.
+function getStarted() {
+  if (DEMO.active) { exitDemo(); }   // exitDemo() restores real state; ends on landing
+  showView("app");                   // real app entry (gate → Sign in when logged out)
+}
+el("get-started").onclick = getStarted;
+el("about-cta").onclick = getStarted;
 el("run-another").onclick = () => showView("app");
 
 // ---------- toast ----------
@@ -1008,16 +1074,60 @@ function setLoggedIn(me) {
 
 el("gate-connect").onclick = () => (window.location.replace("/login"));
 
-// ---------- demo / guided preview modal ----------
+// ---------- demo / guided preview modal (legacy; kept but no longer triggered) ----------
 const demoModal = el("demo-modal");
 function openDemo() { demoModal.hidden = false; document.body.style.overflow = "hidden"; }
 function closeDemo() { demoModal.hidden = true; document.body.style.overflow = ""; }
-el("gate-demo").onclick = openDemo;
 el("demo-close").onclick = closeDemo;
 el("demo-done").onclick = closeDemo;
 el("demo-about").onclick = () => { closeDemo(); showView("about"); };
 demoModal.addEventListener("click", (e) => { if (e.target === demoModal) closeDemo(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !demoModal.hidden) closeDemo(); });
+
+// ---------- DEMO / GUEST MODE (real agent reasoning on a seeded calendar) ----------
+// A self-contained sandbox: no Google login, no Firestore, no real calendar writes.
+// Runs against /agent/demo/run, which reuses the live agent reasoning server-side.
+const DEMO = { active: false, timeline: [], drafts: [] };
+
+function enterDemo() {
+  DEMO.active = true;
+  document.documentElement.setAttribute("data-demo", "1");   // accent shift
+  el("demo-banner").hidden = false;
+  el("hero-demo-note").hidden = false;   // make demo unmistakable on the landing too
+  // Header chip → DEMO + exit (no real auth involved).
+  authEl.innerHTML = `<span class="chip demo-chip"><span class="dot"></span><strong>DEMO</strong></span>
+    <button class="btn ghost sm" id="hdr-exit-demo">Exit demo</button>`;
+  el("hdr-exit-demo").onclick = exitDemo;
+  // Open the workspace command card directly (bypass the connect gate).
+  gateEl.hidden = true;
+  commandEl.hidden = false;
+  resultsEl.hidden = true;
+  setApprovedNav(0);
+  // Seed a sensible default deadline (3 days out, 18:00) so judges can just hit Run.
+  const d = new Date(); d.setDate(d.getDate() + 3); d.setHours(18, 0, 0, 0);
+  const pad = (n) => String(n).padStart(2, "0");
+  deadlineEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  if (!goalEl.value) goalEl.value = "Finish a 12-hour research report";
+  showView("app");
+}
+
+function exitDemo() {
+  DEMO.active = false;
+  DEMO.timeline = []; DEMO.drafts = [];
+  document.documentElement.removeAttribute("data-demo");
+  el("demo-banner").hidden = true;
+  el("hero-demo-note").hidden = true;
+  // Clear any demo results so nothing leaks into the live view.
+  el("receipt-card").hidden = true; el("timeline-card").hidden = true; el("drafts-card").hidden = true;
+  resultsEl.hidden = true;
+  showView("landing");
+  refreshAuth();   // restore the real (logged-out/in) header + gate
+}
+
+el("gate-demo").onclick = enterDemo;
+el("hero-demo").onclick = enterDemo;
+el("demo-banner-exit").onclick = exitDemo;
+el("hero-demo-exit").onclick = exitDemo;
 
 // ---------- clipboard helper (secure-context API + fallback) ----------
 async function copyText(text) {
@@ -1051,7 +1161,7 @@ function openSchedule() {
   el("drafts-card").hidden = true;
   el("undo-status").hidden = true;
   resultsEl.hidden = false;
-  footerEl.hidden = false;
+  footerEl.hidden = DEMO.active;
   setRangeDefaults();
   loadTimeline();
   loadDrafts();
@@ -1095,16 +1205,28 @@ async function runKairos() {
 
   // Move to the dedicated results view, show working animation.
   showView("results");
-  el("results-title").textContent = "Kairos results";
+  el("results-title").textContent = DEMO.active ? "Kairos results · DEMO" : "Kairos results";
   el("undo-status").hidden = true;
-  footerEl.hidden = false;
+  footerEl.hidden = DEMO.active;   // undo-all needs a real account — hide in demo
   setRangeDefaults();
   runBtn.disabled = true;
   showWorking();
   try {
-    const p = new URLSearchParams({ hours: String(hours), goal });
-    if (deadline) p.set("deadline", deadline);
-    const result = await api("/agent/run?" + p.toString());
+    let result;
+    if (DEMO.active) {
+      // Demo: same agent reasoning server-side, seeded calendar, no real writes.
+      result = await api("/agent/demo/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal, deadline: deadline || null, hours }),
+      });
+      DEMO.timeline = result.timeline || [];
+      DEMO.drafts = result.drafts || [];
+    } else {
+      const p = new URLSearchParams({ hours: String(hours), goal });
+      if (deadline) p.set("deadline", deadline);
+      result = await api("/agent/run?" + p.toString());
+    }
     finishWorking();
     renderResult(result);
     resultsEl.hidden = false;
@@ -1279,7 +1401,8 @@ function renderRetry(goal, deadline) {
 
 // ---------- timeline ----------
 async function loadTimeline(runResult) {
-  const card = el("timeline-card");
+  // Demo mode renders from the in-memory demo run — no fetch, no /ui/timeline.
+  if (DEMO.active) { el("range-bar").hidden = true; renderTimeline(DEMO.timeline || [], runResult); return; }
   // Build the query from the From/To range pickers (falls back to a window).
   const fromV = el("range-from") && el("range-from").value;
   const toV = el("range-to") && el("range-to").value;
@@ -1290,19 +1413,28 @@ async function loadTimeline(runResult) {
   }
   try {
     const data = await api(`/ui/timeline?${qs}`);
-    const events = data.events || [];
-
-    // Belt-and-suspenders: also flag any event just created this run.
-    if (runResult) {
-      const fresh = new Set((runResult.executed_actions || [])
-        .filter((a) => a.name === "create_calendar_event")
-        .map((a) => a.result && a.result.event_id).filter(Boolean));
-      events.forEach((ev) => { if (fresh.has(ev.id)) ev.kairos = true; });
-    }
-
     el("range-bar").hidden = false;
+    renderTimeline(data.events || [], runResult);
+  } catch (e) {
+    el("timeline-card").innerHTML = `<p class="section-title">Your schedule</p><div class="banner warn"><span>⚠️</span><div>Couldn't load your timeline: ${esc(e.message)}</div></div>`;
+    el("timeline-card").hidden = false;
+  }
+}
 
-    let html = `
+// Render an events array (live from /ui/timeline OR the demo run) into the timeline
+// card. Pure rendering — shared by the live and demo paths.
+function renderTimeline(events, runResult) {
+  const card = el("timeline-card");
+
+  // Belt-and-suspenders: also flag any event just created this run.
+  if (runResult) {
+    const fresh = new Set((runResult.executed_actions || [])
+      .filter((a) => a.name === "create_calendar_event")
+      .map((a) => a.result && a.result.event_id).filter(Boolean));
+    events.forEach((ev) => { if (fresh.has(ev.id)) ev.kairos = true; });
+  }
+
+  let html = `
       <div class="tl-head">
         <p class="section-title" style="margin:0">Your schedule</p>
         <div class="legend">
@@ -1377,13 +1509,9 @@ async function loadTimeline(runResult) {
       html += `</div>`;
     });
 
-    card.innerHTML = html;
-    card.hidden = false;
-    resultsEl.hidden = false;
-  } catch (e) {
-    card.innerHTML = `<p class="section-title">Your schedule</p><div class="banner warn"><span>⚠️</span><div>Couldn't load your timeline: ${esc(e.message)}</div></div>`;
-    card.hidden = false;
-  }
+  card.innerHTML = html;
+  card.hidden = false;
+  resultsEl.hidden = false;
 }
 
 // ---------- drafts (Lane B) ----------
@@ -1447,6 +1575,8 @@ function clearDrafts(list, btn, label) {
 // Single source of truth: fetch drafts once, render proposed into the results
 // view and approved into their own page, and update the nav count.
 async function loadDrafts() {
+  // Demo: drafts live only in the demo run result (not persisted server-side).
+  if (DEMO.active) { renderDemoDrafts(DEMO.drafts || []); setApprovedNav(0); return; }
   let data;
   try { data = await api("/agent/drafts"); }
   catch { el("drafts-card").hidden = true; setApprovedNav(0); return; }
@@ -1454,6 +1584,42 @@ async function loadDrafts() {
   const all = (data.drafts || []).filter((d) => d.status !== "dismissed");
   renderProposed(all.filter((d) => d.status === "proposed"));
   renderApproved(all.filter((d) => d.status === "confirmed"));
+}
+
+// Demo drafts: read-only proposed cards with Copy only (no real persistence, so
+// no confirm/edit/dismiss endpoints are called).
+function renderDemoDrafts(drafts) {
+  const card = el("drafts-card");
+  const proposed = (drafts || []).filter((d) => d.status === "proposed" || !d.status);
+  if (!proposed.length) { card.hidden = true; card.innerHTML = ""; return; }
+  let html = `
+    <div class="drafts-head">
+      <p class="section-title" style="margin:0">Rescue Drafts · Needs Your Call</p>
+    </div>
+    <div class="banner info" style="margin-bottom:14px"><span>🛟</span><div>The deadline looked at risk, so Kairos drafted a heads-up message. <strong>Nothing is ever sent</strong> — in the live app you'd confirm it, then copy &amp; send it yourself.</div></div>`;
+  proposed.forEach((d) => {
+    html += `
+      <div class="draft" data-id="${esc(d.draft_id)}">
+        <div class="draft-top">
+          <span class="to">To: ${esc(d.recipient || "—")}</span>
+          <span class="draft-status proposed">Awaiting you</span>
+        </div>
+        <div class="subject">${esc(d.subject || "(no subject)")}</div>
+        <div class="body">${esc(d.body || "")}</div>
+        <p class="nosend">🔒 Never sent — copy &amp; send it yourself (Kairos has no Gmail access).</p>
+        <div class="draft-actions"><button class="btn sm" data-act="copy">Copy</button></div>
+      </div>`;
+  });
+  card.innerHTML = html;
+  card.hidden = false;
+  card.querySelectorAll(".draft").forEach((node) => {
+    const d = proposed.find((x) => x.draft_id === node.dataset.id);
+    const btn = node.querySelector('[data-act="copy"]');
+    if (btn && d) btn.onclick = async () => {
+      const ok = await copyText(`${d.subject || ""}\n\n${d.body || ""}`);
+      toast(ok ? "Draft copied" : "Couldn't copy", !ok);
+    };
+  });
 }
 
 // Results view: only the "Needs Your Call" proposed drafts.
@@ -1588,6 +1754,13 @@ el("timeline-card").addEventListener("click", async (e) => {
   const id = btn.getAttribute("data-dismiss");
   if (!id) return;
   if (!confirm("Remove this Kairos focus block from your calendar? Your own events are never touched.")) return;
+  // Demo: drop the block from the in-memory demo timeline and re-render (no API).
+  if (DEMO.active) {
+    DEMO.timeline = (DEMO.timeline || []).filter((ev) => String(ev.id) !== String(id));
+    toast("Block removed");
+    renderTimeline(DEMO.timeline, null);
+    return;
+  }
   // Inline circular progress on the button itself; disabled to block double-clicks.
   btn.disabled = true;
   btn.classList.add("busy");

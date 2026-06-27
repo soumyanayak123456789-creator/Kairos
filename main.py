@@ -1683,6 +1683,416 @@ def agent_run(
     return run_agent(sub, data, goal, deadline, hours)
 
 
+# --- Demo / guest mode (no OAuth, no Firestore, no real calendar writes) ------
+# A PARALLEL path so judges can experience the REAL agent reasoning (Gemini
+# breakdown, free-time weighing, block placement, working-hours enforcement, caps,
+# Lane B rescue drafts) sandboxed against a seeded in-memory calendar. It REUSES
+# the live reasoning/calendar helpers verbatim — only the calendar SOURCE (seed)
+# and SINK (in-memory, returned to the UI) differ. None of the live functions
+# (run_agent, execute_lane_a, build_snapshot, _cal_*) are modified or invoked with
+# real credentials here.
+
+# Fixed realistic student week (classes/labs), so the demo is consistent. Times
+# are local working-tz; mornings, mid-afternoon gaps, evenings and weekends stay
+# partly free so a multi-hour goal has room to schedule.
+_DEMO_WEEK = {
+    0: [("Data Structures Lecture", 10, 0, 11, 0), ("Operating Systems Lecture", 14, 0, 15, 30)],
+    1: [("Physics Lab", 11, 0, 13, 0), ("Linear Algebra Tutorial", 15, 0, 16, 0)],
+    2: [("Data Structures Lecture", 10, 0, 11, 0), ("Operating Systems Lecture", 14, 0, 15, 30)],
+    3: [("Physics Lab", 11, 0, 13, 0), ("Linear Algebra Tutorial", 15, 0, 16, 0)],
+    4: [("Data Structures Lecture", 10, 0, 11, 0), ("Career Workshop", 16, 0, 17, 0)],
+    5: [("Football Practice", 17, 0, 18, 30)],
+    6: [("Group Project Sync", 16, 0, 17, 0)],
+}
+
+
+def _demo_seed_events(now_local: datetime, tz: ZoneInfo) -> list[dict]:
+    """Google-Calendar-shaped seed events for the next 7 days (fixed weekly pattern)."""
+    events: list[dict] = []
+    base = now_local.date()
+    n = 0
+    for off in range(7):
+        day = base + timedelta(days=off)
+        for (summary, sh, sm, eh, em) in _DEMO_WEEK.get(day.weekday(), []):
+            s = datetime(day.year, day.month, day.day, sh, sm, tzinfo=tz)
+            e = datetime(day.year, day.month, day.day, eh, em, tzinfo=tz)
+            n += 1
+            events.append({
+                "id": f"seed-{n}",
+                "summary": summary,
+                "start": {"dateTime": s.isoformat()},
+                "end": {"dateTime": e.isoformat()},
+                "status": "confirmed",
+            })
+    return events
+
+
+def _demo_parse(iso: str) -> datetime:
+    d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+class _DemoResponse:
+    """Minimal stand-in for a requests.Response (status_code / .json() / .text)."""
+
+    def __init__(self, status_code: int, payload: dict):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+    @property
+    def text(self) -> str:
+        return json.dumps(self._payload)
+
+
+class DemoSession:
+    """Duck-typed stand-in for AuthorizedSession against a seeded in-memory calendar.
+
+    Serves the SAME calendar helpers the live agent uses (_list_events, _freebusy,
+    _cal_create/_cal_get/_cal_patch/_cal_delete) and captures 'booked' blocks in
+    memory. No network, no Google API, no writes to any real calendar.
+    """
+
+    def __init__(self, seed_events: list[dict]):
+        self.events = [dict(e) for e in seed_events]
+        self._counter = 0
+
+    @staticmethod
+    def _bounds(ev: dict) -> tuple[datetime, datetime]:
+        s = ev["start"].get("dateTime") or ev["start"].get("date")
+        e = ev["end"].get("dateTime") or ev["end"].get("date")
+        return _demo_parse(s), _demo_parse(e)
+
+    def get(self, url, params=None, **_):
+        params = params or {}
+        if url.endswith("/events"):  # events.list
+            tmin, tmax = _demo_parse(params["timeMin"]), _demo_parse(params["timeMax"])
+            want_clutch = params.get("privateExtendedProperty") == f"{CLUTCH_MARKER}=1"
+            items = []
+            for ev in self.events:
+                if want_clutch:
+                    priv = (ev.get("extendedProperties", {}) or {}).get("private", {}) or {}
+                    if priv.get(CLUTCH_MARKER) != "1":
+                        continue
+                s, e = self._bounds(ev)
+                if e <= tmin or s >= tmax:
+                    continue
+                items.append(ev)
+            items.sort(key=lambda ev: self._bounds(ev)[0])
+            return _DemoResponse(200, {"items": items})
+        eid = url.rsplit("/", 1)[-1]  # events.get
+        for ev in self.events:
+            if ev.get("id") == eid:
+                return _DemoResponse(200, ev)
+        return _DemoResponse(404, {"error": "not found"})
+
+    def post(self, url, json=None, **_):
+        body = json or {}
+        if url.endswith("/freeBusy"):
+            tmin, tmax = _demo_parse(body["timeMin"]), _demo_parse(body["timeMax"])
+            busy = []
+            for ev in self.events:
+                s, e = self._bounds(ev)
+                if e <= tmin or s >= tmax:
+                    continue
+                busy.append({
+                    "start": ev["start"].get("dateTime") or ev["start"].get("date"),
+                    "end": ev["end"].get("dateTime") or ev["end"].get("date"),
+                })
+            return _DemoResponse(200, {"calendars": {"primary": {"busy": busy}}})
+        if url.endswith("/events"):  # events.insert
+            self._counter += 1
+            ev = dict(body)
+            ev["id"] = f"demo-evt-{self._counter}"
+            ev["htmlLink"] = "#demo"
+            ev["status"] = "confirmed"
+            self.events.append(ev)
+            return _DemoResponse(200, ev)
+        return _DemoResponse(400, {"error": "unsupported"})
+
+    def patch(self, url, json=None, **_):
+        eid = url.rsplit("/", 1)[-1]
+        for ev in self.events:
+            if ev.get("id") == eid:
+                ev.update(json or {})
+                return _DemoResponse(200, ev)
+        return _DemoResponse(404, {"error": "not found"})
+
+    def delete(self, url, **_):
+        eid = url.rsplit("/", 1)[-1]
+        self.events = [e for e in self.events if e.get("id") != eid]
+        return _DemoResponse(204, {})
+
+
+def _demo_execute(state: dict, client, name, args, prefs, run_deadline=None, run_goal=None) -> dict:
+    """In-memory mirror of execute_lane_a's tool dispatch for demo mode.
+
+    REUSES the same reasoning helpers (enforce_working_hours, _format_block_title,
+    _cal_create against the DemoSession, decompose_goal, _normalize_due) — only the
+    persistence is in-memory instead of Firestore. Returns the result payload.
+    """
+    session = state["session"]
+
+    if name == "create_calendar_event":
+        start, end, adjusted = enforce_working_hours(args["start"], args["end"], prefs)
+        block_goal = args.get("goal") or run_goal
+        title = _format_block_title(args.get("title", "Focus block"), block_goal)
+        ev = _cal_create(session, title, start, end, args.get("description"), goal=block_goal)
+        return {"event_id": ev.get("id"), "htmlLink": ev.get("htmlLink"), "title": title,
+                "goal": block_goal, "start": start, "end": end, "adjusted": adjusted}
+
+    if name == "reschedule_event":
+        prev = _cal_get(session, args["event_id"])
+        _cal_patch(session, args["event_id"],
+                   {"start": _event_time(args["new_start"]), "end": _event_time(args["new_end"])})
+        return {"event_id": args["event_id"], "new_start": args["new_start"],
+                "new_end": args["new_end"], "_prev": prev.get("start")}
+
+    if name == "break_down_task":
+        tz = ZoneInfo(prefs["work_tz"])
+        now = datetime.now(tz)
+        deadline_dt = _safe_parse_local(args.get("deadline") or run_deadline, tz)
+        subtasks = decompose_goal(client, args["goal"], now, deadline_dt)
+        total = len(subtasks)
+        ids = []
+        for i, st in enumerate(subtasks):
+            st["due"] = _normalize_due(st.get("due"), now, deadline_dt, i, total, tz).isoformat()
+            tid = f"demo-task-{len(state['tasks']) + 1}"
+            state["tasks"].append({"id": tid, "title": st.get("title"), "effort": st.get("effort"),
+                                   "due": st["due"], "status": "todo", "parent_goal": args["goal"]})
+            ids.append(tid)
+        return {"created_task_ids": ids, "subtasks": subtasks}
+
+    if name == "upsert_task":
+        tid = args.get("task_id")
+        fields = {k: v for k, v in args.items() if k != "task_id"}
+        for t in state["tasks"]:
+            if t["id"] == tid:
+                t.update(fields)
+                break
+        else:
+            tid = f"demo-task-{len(state['tasks']) + 1}"
+            state["tasks"].append({"id": tid, "status": "todo", **fields})
+        return {"task_id": tid}
+
+    if name == "reprioritize":
+        return {"ordered": args.get("ranked_task_ids", [])}
+
+    raise HTTPException(500, f"Unhandled demo Lane A tool: {name}")
+
+
+def run_agent_demo(goal: str | None, deadline: str | None, hours: int) -> dict:
+    """Parallel agent loop for demo mode. Same orchestration + the SAME reasoning
+    primitives as run_agent, but reads the seeded calendar and writes in-memory."""
+    client = _gemini_client()
+    config = types.GenerateContentConfig(
+        tools=[types.Tool(function_declarations=FUNCTION_DECLARATIONS)],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.2,
+    )
+    prefs = get_prefs({})  # module defaults (no user doc)
+    tz = ZoneInfo(prefs["work_tz"])
+    session = DemoSession(_demo_seed_events(datetime.now(tz), tz))
+    state = {"session": session, "tasks": []}
+
+    # 1) Perceive (live read helpers against the demo session; tasks start empty).
+    now = datetime.now(timezone.utc)
+    end = now + timedelta(hours=hours)
+    tmin, tmax = now.isoformat(), end.isoformat()
+
+    def _snapshot() -> dict:
+        events = _list_events(session, tmin, tmax)
+        busy = _freebusy(session, tmin, tmax)
+        tasks = _jsonify(state["tasks"])
+        return {"window": {"start": tmin, "end": tmax, "hours": hours, "timezone": "UTC"},
+                "counts": {"events": len(events), "busy_blocks": len(busy), "tasks": len(tasks)},
+                "events": events, "busy": busy, "tasks": tasks}
+
+    perceived = _snapshot()
+    ranking = rank_tasks(perceived["tasks"])
+
+    policy = (
+        f"Scheduling policy (ENFORCED server-side): only book focus blocks between "
+        f"{prefs['work_start_hour']:02d}:00 and {prefs['work_end_hour']:02d}:00 "
+        f"{prefs['work_tz']}; max {prefs['max_block_minutes']} min per block; at most "
+        f"{MAX_EVENTS_PER_RUN} events total this run (the run HALTS past that). Break "
+        f"the goal into several DISTINCT, granular subtasks and book ONE block per "
+        f"subtask, titled after it. Schedule the FULL estimated effort across the "
+        f"available free days when it fits before the deadline — do not stop after a "
+        f"single block while free time remains. Prefer creating more distinct "
+        f"subtasks over repeating one subtask as '(Part 1)'…'(Part N)'; split a "
+        f"single subtask across blocks only if its own effort exceeds the "
+        f"{prefs['max_block_minutes']}-min cap, spreading those across different days. "
+        f"Only when all usable free time before the deadline is booked and work still "
+        f"remains is the goal infeasible. Blocks outside working hours are "
+        f"rejected/clamped, so propose compliant times."
+    )
+    user_prompt = (
+        f"Goal: {goal or '(no specific goal — review my schedule and improve it)'}\n"
+        f"Deadline: {deadline or '(unspecified)'}\n\n"
+        f"{policy}\n\n"
+        f"Current schedule snapshot (window {perceived['window']['start']} → "
+        f"{perceived['window']['end']}):\n"
+        f"- events: {perceived['events']}\n"
+        f"- busy: {perceived['busy']}\n"
+        f"- existing subtasks (deterministically pre-ranked): {ranking}\n\n"
+        "Take the actions needed via function calls."
+    )
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_prompt)])]
+
+    executed_reads = [{"name": "get_schedule_snapshot", "args": {"hours": hours}, "trigger": "initial perceive"}]
+    executed_actions: list[dict] = []
+    proposed: list[dict] = []
+    drafts: list[dict] = []
+    notifications: list[dict] = []
+    steps_log: list[dict] = []
+    last_snapshot = perceived
+    final_text = None
+    events_created = 0
+    halted = False
+
+    for step in range(AGENT_STEP_CAP):
+        resp, model, attempts = generate_with_fallback(client, contents, config)
+        fcs = resp.function_calls or []
+        steps_log.append({"step": step + 1, "model": model, "attempts": attempts,
+                          "function_calls": [fc.name for fc in fcs]})
+
+        if not fcs:
+            final_text = resp.text
+            break
+
+        contents.append(resp.candidates[0].content)
+        tool_parts = []
+        for fc in fcs:
+            name = fc.name
+            args = dict(fc.args) if fc.args else {}
+
+            if name == "get_schedule_snapshot":
+                last_snapshot = _snapshot()
+                executed_reads.append({"name": name, "args": args, "trigger": "model-requested"})
+                payload = {"snapshot": last_snapshot}
+
+            elif name == "create_calendar_event":
+                if events_created >= MAX_EVENTS_PER_RUN or len(executed_actions) >= AGENT_MAX_ACTIONS:
+                    halted = True
+                    payload = {"status": "halted",
+                               "note": f"per-run cap reached (max {MAX_EVENTS_PER_RUN} events); stop creating events."}
+                else:
+                    try:
+                        result = _demo_execute(state, client, name, args, prefs,
+                                               run_deadline=deadline, run_goal=goal)
+                        executed_actions.append({"name": name, "args": args, "result": result})
+                        events_created += 1
+                        payload = {"status": "executed", **result}
+                    except Exception as e:  # noqa: BLE001 — feed back so the model can adapt
+                        payload = {"status": "error", "detail": str(e)}
+
+            elif name in LANE_A_TOOLS:
+                if len(executed_actions) >= AGENT_MAX_ACTIONS:
+                    payload = {"status": "skipped", "note": f"action limit ({AGENT_MAX_ACTIONS}) reached"}
+                else:
+                    try:
+                        result = _demo_execute(state, client, name, args, prefs,
+                                               run_deadline=deadline, run_goal=goal)
+                        executed_actions.append({"name": name, "args": args, "result": result})
+                        payload = {"status": "executed", **result}
+                    except Exception as e:  # noqa: BLE001
+                        payload = {"status": "error", "detail": str(e)}
+
+            elif name in LANE_B_PROPOSE:
+                d_goal = args.get("goal") or goal
+                unmet = args.get("unmet_portion") or ""
+                recipient = args.get("recipient") or "[recipient]"
+                if args.get("body"):
+                    subject = args.get("subject") or f"Update on {d_goal or 'my deadline'}"
+                    body = args["body"]
+                else:
+                    composed = compose_rescue_draft(client, d_goal, unmet, deadline, args.get("new_eta"), recipient)
+                    subject, body = composed["subject"], composed["body"]
+                draft_id = f"demo-draft-{len(drafts) + 1}"
+                view = {"draft_id": draft_id, "recipient": recipient, "subject": subject,
+                        "body": body, "goal": d_goal, "unmet_portion": unmet, "status": "proposed"}
+                drafts.append(view)
+                proposed.append({"name": name, "draft_id": draft_id})
+                payload = {"status": "drafted_pending_confirmation", "draft_id": draft_id,
+                           "recipient": recipient, "subject": subject, "body": body,
+                           "note": "Lane B: demo draft (never sent, not persisted)."}
+
+            elif name == "notify_user":
+                notifications.append({"message": args.get("message"), "urgency": args.get("urgency", "normal")})
+                payload = {"status": "delivered"}
+
+            else:
+                payload = {"status": "unknown_tool"}
+
+            tool_parts.append(types.Part.from_function_response(name=name, response=payload))
+        contents.append(types.Content(role="tool", parts=tool_parts))
+
+        if halted:
+            final_text = (f"Halted: per-run cap reached ({events_created} events, "
+                          f"{len(executed_actions)} actions).")
+            break
+    else:
+        final_text = f"Step cap ({AGENT_STEP_CAP}) reached before the model finished."
+
+    # Build a UI timeline: seed (user) events + booked (Kairos) blocks, flagged.
+    final_events = _list_events(session, tmin, tmax)
+    goal_by_id, clutch_ids = {}, set()
+    for ev in session.events:
+        priv = (ev.get("extendedProperties", {}) or {}).get("private", {}) or {}
+        if priv.get(CLUTCH_MARKER) == "1":
+            clutch_ids.add(ev.get("id"))
+            if priv.get("clutch_goal"):
+                goal_by_id[ev.get("id")] = priv["clutch_goal"]
+    timeline = []
+    for ev in final_events:
+        item = dict(ev)
+        item["kairos"] = ev.get("id") in clutch_ids
+        if item["kairos"] and goal_by_id.get(ev.get("id")):
+            item["goal"] = goal_by_id[ev["id"]]
+        timeline.append(item)
+
+    return {
+        "demo": True,
+        "goal": goal,
+        "deadline": deadline,
+        "models": {"primary": PRIMARY_MODEL, "fallback": FALLBACK_MODEL},
+        "caps": {"max_events_per_run": MAX_EVENTS_PER_RUN, "max_actions": AGENT_MAX_ACTIONS},
+        "steps": steps_log,
+        "snapshot": last_snapshot,
+        "ranking": ranking,
+        "executed_reads": executed_reads,
+        "executed_actions": executed_actions,
+        "events_created": events_created,
+        "halted": halted,
+        "proposed_writes_not_executed": proposed,
+        "drafts": drafts,
+        "notifications": notifications,
+        "final_text": final_text,
+        "timeline": timeline,
+    }
+
+
+class DemoRunRequest(BaseModel):
+    goal: str | None = None
+    deadline: str | None = None
+    hours: int = 72
+
+
+@app.post("/agent/demo/run")
+def agent_demo_run(body: DemoRunRequest):
+    """GUEST/DEMO mode: run the REAL agent reasoning against a seeded in-memory
+    calendar. No OAuth, no Firestore user, no real calendar writes. Gemini still
+    runs via Vertex (project credit). Returns the same shape as /agent/run plus a
+    pre-built `timeline`. Live login/calendar/write paths are untouched."""
+    if body.hours < 1 or body.hours > 24 * 30:
+        raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
+    return run_agent_demo(body.goal, body.deadline, body.hours)
+
+
 # --- Undo (reverses logged actions; never guesses) ---------------------------
 
 
