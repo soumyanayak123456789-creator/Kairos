@@ -505,14 +505,23 @@ def snapshot(request: Request, hours: int = 48):
 
 
 @app.get("/ui/timeline")
-def ui_timeline(request: Request, hours: int = 72):
+def ui_timeline(
+    request: Request,
+    hours: int = 72,
+    start: str | None = None,
+    end: str | None = None,
+):
     """Serving route for the frontend timeline.
 
-    Returns the day's calendar events, each annotated with `kairos: bool` (True
-    for agent-created focus blocks, detected via the existing clutch-marker
-    filter). UI-only and read-only — it does NOT feed Gemini, so it never changes
-    agent behavior (unlike build_snapshot, which is left untouched). Window runs
-    from local midnight today to now + `hours`, so the full current day shows.
+    Returns calendar events, each annotated with `kairos: bool` (True for
+    agent-created focus blocks, detected via the existing clutch-marker filter).
+    UI-only and read-only — it does NOT feed Gemini, so it never changes agent
+    behavior (unlike build_snapshot, which is left untouched).
+
+    Range selection: if `start` and/or `end` (local `YYYY-MM-DD` dates) are
+    given, the window runs from `start` local-midnight to `end` end-of-day
+    (inclusive). Otherwise it falls back to local-midnight-today → now + `hours`,
+    so the full current day shows.
     """
     if hours < 1 or hours > 24 * 30:
         raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
@@ -526,9 +535,34 @@ def ui_timeline(request: Request, hours: int = 72):
 
     tz = ZoneInfo(get_prefs(data)["work_tz"])
     now_local = datetime.now(tz)
-    start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    time_min = start.isoformat()
-    time_max = (now_local + timedelta(hours=hours)).isoformat()
+
+    if start or end:
+        try:
+            win_start = (
+                datetime.fromisoformat(start).replace(tzinfo=tz)
+                if start
+                else now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            )
+            # `end` is inclusive: extend to the very end of that local day.
+            win_end = (
+                datetime.fromisoformat(end).replace(
+                    hour=23, minute=59, second=59, microsecond=0, tzinfo=tz
+                )
+                if end
+                else win_start + timedelta(hours=hours)
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="start/end must be YYYY-MM-DD dates."
+            )
+        if win_end <= win_start:
+            raise HTTPException(status_code=400, detail="end must be after start.")
+        time_min = win_start.isoformat()
+        time_max = win_end.isoformat()
+    else:
+        win_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        time_min = win_start.isoformat()
+        time_max = (now_local + timedelta(hours=hours)).isoformat()
 
     events = _list_events(session, time_min, time_max)
     kairos_ids = {e.get("id") for e in _list_clutch_events(session, time_min, time_max)}

@@ -1,43 +1,72 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Kairos — The Last-Minute Life Saver</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg:        #06080d;
-    --bg-2:      #0a0f18;
-    --surface:   rgba(18,26,39,0.78);
-    --surface-2: rgba(24,33,49,0.72);
-    --surface-3: #1d2838;
-    --border:    rgba(212,182,106,0.14);     /* faint gold hairline */
-    --border-c:  rgba(255,255,255,0.08);
-    --border-2:  rgba(255,255,255,0.13);
-    --text:      #eaf0f8;
-    --text-dim:  #97a6ba;
-    --text-faint:#647187;
-    --accent:    #2dd4bf;   /* teal */
-    --accent-2:  #38bdf8;   /* cyan/blue */
-    --accent-soft: rgba(45,212,191,0.12);
-    --accent-line: rgba(45,212,191,0.42);
-    --gold:      #e3c27e;   /* antique gold */
-    --gold-2:    #c9a24a;   /* bronze */
-    --gold-soft: rgba(227,194,126,0.12);
-    --warn:      #fbbf24;
-    --warn-soft: rgba(251,191,36,0.11);
-    --danger:    #f4837e;
-    --danger-soft: rgba(244,131,126,0.12);
-    --radius:    18px;
+    --bg:        #f6f8fc;
+    --surface:   #ffffff;
+    --surface-2: #f1f3f4;
+    --surface-3: #e3e6ea;
+    --border:    #dfe3e8;
+    --border-2:  #cdd2d8;
+    --text:      #16181b;   /* near-black headings */
+    --text-dim:  #3c4043;   /* dark grey body — AA on white */
+    --text-faint:#5f6368;   /* muted but still AA */
+    --accent:    #0e8f82;   /* teal */
+    --accent-2:  #2563eb;   /* blue */
+    --accent-ink:#0a6b61;
+    --accent-soft: #e3f3f1;
+    --blue-soft: #e8f0fe;
+    --warn:      #8a4b00;
+    --warn-soft: #fdf3da;
+    --danger:    #b3261e;
+    --danger-soft: #fbe6e4;
+    --radius:    16px;
     --radius-sm: 12px;
-    --shadow:    0 24px 60px -24px rgba(0,0,0,0.8);
+    --shadow-sm: 0 1px 2px rgba(60,64,67,.10), 0 1px 3px rgba(60,64,67,.06);
+    --shadow:    0 1px 3px rgba(60,64,67,.12), 0 6px 18px rgba(60,64,67,.08);
+    --shadow-lg: 0 10px 34px rgba(60,64,67,.16);
     --grad:      linear-gradient(120deg, var(--accent), var(--accent-2));
-    --grad-gold: linear-gradient(120deg, var(--gold), var(--gold-2));
     --serif:     'Cinzel', 'Times New Roman', serif;
     --sans:      'Inter', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --header-bg: rgba(246,248,252,0.82);
+    --toast-bg:  #202124;
+    --toast-fg:  #ffffff;
+    --blob-op:   0.30;
+  }
+
+  [data-theme="dark"] {
+    --bg:        #0e141b;
+    --surface:   #161d26;
+    --surface-2: #1c2632;
+    --surface-3: #28323e;
+    --border:    #28323d;
+    --border-2:  #364250;
+    --text:      #f2f5f8;   /* near-white headings */
+    --text-dim:  #c5cdd7;   /* readable light grey body */
+    --text-faint:#93a0ad;
+    --accent:    #2dd4bf;   /* brighter teal for dark */
+    --accent-2:  #60a5fa;   /* brighter blue */
+    --accent-ink:#5eead4;
+    --accent-soft: rgba(45,212,191,0.15);
+    --blue-soft: rgba(96,165,250,0.16);
+    --warn:      #fbbf24;
+    --warn-soft: rgba(251,191,36,0.13);
+    --danger:    #f87171;
+    --danger-soft: rgba(248,113,113,0.15);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+    --shadow:    0 2px 6px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-lg: 0 14px 40px rgba(0,0,0,.55);
+    --header-bg: rgba(14,20,27,0.82);
+    --toast-bg:  #e8edf2;
+    --toast-fg:  #10151b;
+    --blob-op:   0.50;
   }
 
   * { box-sizing: border-box; }
@@ -45,169 +74,253 @@
   body {
     font-family: var(--sans);
     color: var(--text);
-    line-height: 1.5;
+    line-height: 1.55;
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
-    overflow-x: hidden;
+    transition: background-color .35s ease, color .35s ease;
   }
-  ::selection { background: rgba(45,212,191,0.3); }
+  ::selection { background: rgba(14,143,130,0.20); }
+  [hidden] { display: none !important; }
+  .hidden { display: none !important; }
 
-  /* ============ Animated background motif (behind everything) ============ */
+  /* ============ Animated background (subtle floating blobs) ============ */
   .bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
-  .bg .wash {
-    position: absolute; inset: -20%;
-    background:
-      radial-gradient(40% 50% at 78% 12%, rgba(56,189,248,0.16), transparent 60%),
-      radial-gradient(45% 55% at 12% 8%,  rgba(45,212,191,0.13), transparent 60%),
-      radial-gradient(50% 60% at 50% 110%, rgba(227,194,126,0.08), transparent 60%),
-      linear-gradient(180deg, #070a11, #05070c 60%, #04060a);
-    animation: washDrift 26s ease-in-out infinite alternate;
+  .blob {
+    position: absolute; border-radius: 50%; filter: blur(80px);
+    opacity: var(--blob-op); will-change: transform;
   }
-  @keyframes washDrift {
-    0%   { transform: translate3d(0,0,0) scale(1.02); }
-    100% { transform: translate3d(-1.5%, 1.5%, 0) scale(1.06); }
-  }
-  /* Giant slow-turning clock / constellation motif */
-  .bg .dialmotif {
-    position: absolute; top: 50%; left: 50%; width: 150vmax; height: 150vmax;
-    transform: translate(-50%, -50%); opacity: 0.5;
-    animation: turn 320s linear infinite;
-  }
-  @keyframes turn { to { transform: translate(-50%, -50%) rotate(360deg); } }
-  .bg .scrim {
-    position: absolute; inset: 0;
-    background: radial-gradient(120% 100% at 50% 24%, transparent 0%, rgba(5,7,11,0.5) 62%, rgba(3,4,7,0.92) 100%);
-  }
-  .bg .grain { position: absolute; inset: 0; opacity: 0.025;
-    background-image: radial-gradient(rgba(255,255,255,0.6) 1px, transparent 1px);
-    background-size: 3px 3px; }
+  .blob.b1 { width: 480px; height: 480px; top: -140px; left: -120px;
+    background: radial-gradient(circle, var(--accent), transparent 68%); animation: drift1 26s ease-in-out infinite alternate; }
+  .blob.b2 { width: 520px; height: 520px; top: 24%; right: -180px;
+    background: radial-gradient(circle, var(--accent-2), transparent 68%); animation: drift2 32s ease-in-out infinite alternate; }
+  .blob.b3 { width: 440px; height: 440px; bottom: -180px; left: 28%;
+    background: radial-gradient(circle, var(--accent), transparent 70%); animation: drift3 30s ease-in-out infinite alternate; }
+  @keyframes drift1 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(60px,40px,0) scale(1.12); } }
+  @keyframes drift2 { from { transform: translate3d(0,0,0) scale(1.05); } to { transform: translate3d(-70px,30px,0) scale(0.92); } }
+  @keyframes drift3 { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(40px,-50px,0) scale(1.1); } }
 
-  .wrap { position: relative; z-index: 1; max-width: 1000px; margin: 0 auto; padding: 0 22px 90px; }
+  .wrap { position: relative; z-index: 1; max-width: 1020px; margin: 0 auto; padding: 0 24px 90px; }
 
   /* ============ Header ============ */
   header {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 16px; padding: 26px 0 22px; flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 30;
+    background: var(--header-bg);
+    backdrop-filter: saturate(1.6) blur(12px);
+    -webkit-backdrop-filter: saturate(1.6) blur(12px);
+    border-bottom: 1px solid var(--border);
+    transition: background-color .35s ease, border-color .35s ease;
   }
-  .brand { display: flex; align-items: center; gap: 15px; }
-  .brand .mark { width: 46px; height: 46px; flex: none; filter: drop-shadow(0 4px 16px rgba(227,194,126,0.35)); }
+  .header-in {
+    max-width: 1020px; margin: 0 auto; padding: 13px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; background: none; border: none; padding: 0; cursor: pointer; }
+  .brand .mark { width: 38px; height: 38px; flex: none; }
   .brand .name {
-    font-family: var(--serif); font-size: 30px; font-weight: 700; letter-spacing: 5px;
-    background: var(--grad-gold); -webkit-background-clip: text; background-clip: text;
-    -webkit-text-fill-color: transparent; line-height: 1.1; padding-left: 2px;
+    font-family: var(--serif); font-size: 23px; font-weight: 700; letter-spacing: 2.5px;
+    background: var(--grad); -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; line-height: 1.1;
   }
-  .brand .tag { font-size: 12px; color: var(--text-dim); margin-top: 3px; letter-spacing: 1.4px; text-transform: uppercase; font-weight: 500; }
+  .nav { display: flex; align-items: center; gap: 8px; }
+  .navlink {
+    background: none; border: none; font-family: inherit; font-size: 14px; font-weight: 600;
+    color: var(--text-dim); padding: 9px 14px; border-radius: 8px; cursor: pointer; transition: all .15s;
+  }
+  .navlink:hover { background: var(--surface-2); color: var(--text); }
+  .navlink.active { color: var(--accent-ink); }
+  .icon-btn {
+    display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border-2); color: var(--text-dim);
+    cursor: pointer; transition: all .15s; box-shadow: var(--shadow-sm);
+  }
+  .icon-btn:hover { color: var(--text); background: var(--surface-2); }
 
   .auth { display: flex; align-items: center; gap: 10px; }
   .chip {
     display: inline-flex; align-items: center; gap: 8px;
-    background: var(--surface-2); border: 1px solid var(--border); backdrop-filter: blur(8px);
-    padding: 8px 14px; border-radius: 999px; font-size: 13px; color: var(--text-dim);
+    background: var(--surface); border: 1px solid var(--border-2);
+    padding: 7px 13px; border-radius: 999px; font-size: 13px; color: var(--text-dim); box-shadow: var(--shadow-sm);
   }
-  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: #34a853; }
   .chip strong { color: var(--text); font-weight: 600; }
 
   /* ============ Buttons ============ */
   button { font-family: inherit; cursor: pointer; border: none; }
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 9px;
-    padding: 12px 21px; border-radius: 12px; font-size: 14.5px; font-weight: 600;
-    color: #04221e; background: var(--grad); transition: transform .12s ease, box-shadow .2s ease, opacity .2s;
-    box-shadow: 0 10px 26px -10px rgba(45,212,191,0.6);
+    padding: 12px 24px; border-radius: 999px; font-size: 14.5px; font-weight: 600;
+    color: #fff; background: var(--grad); transition: transform .12s ease, box-shadow .2s ease, opacity .2s;
+    box-shadow: 0 4px 14px -4px rgba(37,99,235,0.5);
   }
-  .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 14px 32px -10px rgba(45,212,191,0.75); }
+  .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 22px -6px rgba(37,99,235,0.6); }
   .btn:active:not(:disabled) { transform: translateY(0); }
-  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
   .btn.ghost {
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2);
-    box-shadow: none; font-weight: 500; backdrop-filter: blur(8px);
+    background: var(--surface); color: var(--text); border: 1px solid var(--border-2);
+    box-shadow: var(--shadow-sm); font-weight: 600;
   }
-  .btn.ghost:hover:not(:disabled) { border-color: var(--gold); color: #fff; }
-  .btn.danger { background: var(--danger-soft); color: var(--danger); border: 1px solid rgba(244,131,126,0.3); box-shadow: none; }
-  .btn.danger:hover:not(:disabled) { background: rgba(244,131,126,0.2); }
-  .btn.sm { padding: 8px 15px; font-size: 13px; border-radius: 10px; }
+  .btn.ghost:hover:not(:disabled) { background: var(--surface-2); }
+  .btn.danger { background: var(--surface); color: var(--danger); border: 1px solid var(--danger); box-shadow: var(--shadow-sm); }
+  .btn.danger:hover:not(:disabled) { background: var(--danger-soft); }
+  .btn.sm { padding: 8px 16px; font-size: 13px; }
+  .btn.lg { padding: 15px 32px; font-size: 16px; }
+
+  /* Official Google sign-in button (kept white in both themes) */
+  .gbtn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+    background: #fff; color: #3c4043; border: 1px solid #dadce0;
+    border-radius: 999px; padding: 11px 22px 11px 18px; font-size: 14.5px; font-weight: 600;
+    box-shadow: var(--shadow-sm); transition: background .15s, box-shadow .2s, border-color .15s;
+    font-family: inherit;
+  }
+  .gbtn:hover:not(:disabled) { background: #f8faff; box-shadow: var(--shadow); }
+  .gbtn .gicon { width: 18px; height: 18px; flex: none; }
+  .gbtn.sm { padding: 8px 16px 8px 13px; font-size: 13px; gap: 9px; }
+  .gbtn.sm .gicon { width: 16px; height: 16px; }
+
+  /* ============ Views ============ */
+  .view { animation: viewIn .35s ease both; }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* ============ Landing / Hero ============ */
+  .hero { position: relative; text-align: center; padding: 76px 16px 54px; }
+  .hero .kicker {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--accent-ink);
+    background: var(--accent-soft); border: 1px solid var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+    padding: 6px 14px; border-radius: 999px; margin-bottom: 22px;
+  }
+  .hero h1 {
+    font-family: var(--serif); font-weight: 700; letter-spacing: 4px; margin: 0 0 8px;
+    font-size: clamp(46px, 9vw, 78px); line-height: 1.04;
+    background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .hero .hook {
+    font-size: clamp(22px, 3.4vw, 30px); font-weight: 700; color: var(--text); margin: 14px auto 14px; max-width: 720px; line-height: 1.25;
+  }
+  .hero .sub { font-size: 17px; color: var(--text-dim); max-width: 580px; margin: 0 auto 30px; }
+  .hero .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+  .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 56px; }
+  .feature {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px 22px; text-align: left; box-shadow: var(--shadow-sm);
+  }
+  .feature .fic {
+    width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 14px;
+    background: var(--accent-soft); color: var(--accent-ink);
+  }
+  .feature h3 { margin: 0 0 6px; font-size: 16.5px; font-weight: 700; color: var(--text); }
+  .feature p { margin: 0; font-size: 14px; color: var(--text-dim); }
+
+  /* ============ About ============ */
+  .about { padding: 44px 0 0; }
+  .about h2 { font-size: clamp(28px, 4vw, 38px); font-weight: 800; margin: 0 0 12px; letter-spacing: -0.5px; color: var(--text); }
+  .about .lead { font-size: 17px; color: var(--text-dim); max-width: 680px; margin: 0 0 36px; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 0 0 34px; }
+  .step {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow-sm); position: relative;
+  }
+  .step .num {
+    font-family: var(--serif); font-size: 13px; font-weight: 700; color: #fff; background: var(--grad);
+    width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 14px;
+  }
+  .step h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; color: var(--text); }
+  .step p { margin: 0; font-size: 14px; color: var(--text-dim); }
+
+  .tech-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; box-shadow: var(--shadow-sm); }
+  .tech-card h3 { margin: 0 0 4px; font-size: 18px; font-weight: 700; color: var(--text); }
+  .tech-card > p { margin: 0 0 20px; font-size: 14.5px; color: var(--text-dim); }
+  .tech-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  .tech {
+    display: flex; gap: 13px; align-items: flex-start; padding: 14px 16px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border);
+  }
+  .tech .tic { font-size: 18px; flex: none; line-height: 1.3; }
+  .tech b { font-size: 14.5px; color: var(--text); }
+  .tech span { display: block; font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+  .about-cta-row { margin-top: 32px; display: flex; gap: 12px; flex-wrap: wrap; }
 
   /* ============ Cards ============ */
   .card {
-    background: var(--surface);
-    border: 1px solid var(--border-c); border-radius: var(--radius);
-    padding: 24px; box-shadow: var(--shadow);
-    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-    position: relative;
-  }
-  .card::before {  /* gold hairline highlight on top edge */
-    content: ""; position: absolute; inset: 0 0 auto 0; height: 1px; border-radius: var(--radius) var(--radius) 0 0;
-    background: linear-gradient(90deg, transparent, rgba(227,194,126,0.45), transparent);
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px; box-shadow: var(--shadow-sm);
   }
   .card + .card { margin-top: 18px; }
-  .section-title {
-    font-family: var(--serif); font-size: 14px; font-weight: 600; letter-spacing: 2.5px;
-    text-transform: uppercase; color: var(--gold); margin: 0 0 16px;
-  }
+  .section-title { font-size: 12.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-faint); margin: 0 0 16px; }
+
+  .app-head { padding: 28px 0 20px; }
+  .app-head h2 { font-size: 26px; font-weight: 800; margin: 0 0 4px; letter-spacing: -0.4px; color: var(--text); }
+  .app-head p { margin: 0; color: var(--text-dim); font-size: 15px; }
+
+  .results-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 28px 0 18px; flex-wrap: wrap; }
+  .results-head h2 { font-size: 24px; font-weight: 800; margin: 0; letter-spacing: -0.4px; color: var(--text); }
 
   /* ============ Command card ============ */
-  .command .lead { font-family: var(--serif); font-size: 22px; font-weight: 600; letter-spacing: .3px; margin: 0 0 6px; color: #fff; }
+  .command .lead { font-size: 19px; font-weight: 700; margin: 0 0 4px; color: var(--text); }
   .command .sub  { color: var(--text-dim); font-size: 14.5px; margin: 0 0 22px; }
-  .field-row { display: grid; grid-template-columns: 1fr 240px; gap: 15px; align-items: end; }
+  .field-row { display: grid; grid-template-columns: 1fr 250px; gap: 16px; align-items: end; }
   .field { display: flex; flex-direction: column; gap: 7px; }
-  .field label { font-size: 12px; color: var(--text-dim); font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+  .field label { font-size: 12.5px; color: var(--text-dim); font-weight: 600; }
   .input {
-    width: 100%; background: rgba(6,9,14,0.7); border: 1px solid var(--border-2); color: var(--text);
-    padding: 13px 15px; border-radius: 12px; font-size: 15px; font-family: inherit; transition: border-color .15s, box-shadow .15s;
+    width: 100%; background: var(--surface); border: 1px solid var(--border-2); color: var(--text);
+    padding: 13px 15px; border-radius: 10px; font-size: 15px; font-family: inherit; transition: border-color .15s, box-shadow .15s;
   }
   .input::placeholder { color: var(--text-faint); }
-  .input:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
-  input[type="datetime-local"].input { color-scheme: dark; }
-  .run-row { margin-top: 20px; display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
-  .run-row .btn { font-size: 15px; padding: 14px 28px; }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  [data-theme="dark"] input[type="date"].input,
+  [data-theme="dark"] input[type="datetime-local"].input { color-scheme: dark; }
+  .run-row { margin-top: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .run-hint { color: var(--text-faint); font-size: 12.5px; }
 
-  /* ============ Working state — the clock ============ */
-  #working[hidden], #results[hidden], .hidden { display: none !important; }
-  .working { text-align: center; }
-  .working .eyebrow { font-family: var(--serif); letter-spacing: 4px; text-transform: uppercase; font-size: 12.5px; color: var(--gold); margin-bottom: 4px; }
-  .working h3 { font-family: var(--serif); font-weight: 600; font-size: 21px; margin: 0 0 22px; color: #fff; letter-spacing: .4px; }
-  .dial-wrap { width: 220px; height: 220px; margin: 0 auto 26px; position: relative; }
-  .dial { width: 100%; height: 100%; display: block; }
-  .dial .hand-second, .dial .hand-hour, .dial .sweep {
-    transform-box: view-box; transform-origin: 100px 100px;
+  /* ============ Working state — clean progress ============ */
+  .working { text-align: center; padding: 40px 24px; }
+  .spinner { width: 58px; height: 58px; margin: 0 auto 20px; }
+  .spinner svg { width: 100%; height: 100%; animation: spin 1.4s linear infinite; transform-origin: center; }
+  .spinner .track { fill: none; stroke: var(--surface-3); stroke-width: 5; }
+  .spinner .arc { fill: none; stroke: var(--accent); stroke-width: 5; stroke-linecap: round; stroke-dasharray: 70 200; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .working h3 { font-weight: 700; font-size: 20px; margin: 0 0 4px; color: var(--text); }
+  .working .wsub { color: var(--text-dim); font-size: 14.5px; margin: 0 0 24px; }
+  .stages { display: inline-flex; flex-direction: column; gap: 6px; text-align: left; }
+  .dial-stage { display: flex; align-items: center; gap: 13px; padding: 9px 16px; border-radius: 10px; color: var(--text-faint); font-size: 14.5px; transition: all .35s ease; }
+  .dial-stage .node {
+    width: 20px; height: 20px; border-radius: 50%; flex: none; border: 2px solid var(--border-2);
+    display: grid; place-items: center; transition: all .35s; position: relative;
   }
-  .dial .hand-second { animation: revolve 4s steps(40) infinite; }
-  .dial .hand-hour   { animation: revolve 30s linear infinite; }
-  .dial .sweep       { animation: revolve 4s linear infinite; }
-  @keyframes revolve { to { transform: rotate(360deg); } }
-  .dial-center { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
-  .dial-center .glyph { font-family: var(--serif); font-size: 13px; letter-spacing: 3px; color: var(--gold); opacity: .9; }
-
-  .dial-stages { display: inline-flex; flex-direction: column; gap: 4px; text-align: left; }
-  .dial-stage { display: flex; align-items: center; gap: 13px; padding: 9px 14px; border-radius: 11px; color: var(--text-faint); font-size: 14px; transition: all .4s ease; }
-  .dial-stage .node { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--surface-3); border: 1px solid var(--border-2); transition: all .4s; }
-  .dial-stage.active { color: #fff; }
-  .dial-stage.active .node { background: var(--gold); border-color: var(--gold); box-shadow: 0 0 12px var(--gold); }
+  .dial-stage.active { color: var(--text); background: var(--accent-soft); }
+  .dial-stage.active .node { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
   .dial-stage.done { color: var(--text-dim); }
-  .dial-stage.done .node { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 10px rgba(45,212,191,0.6); }
+  .dial-stage.done .node { background: var(--accent); border-color: var(--accent); }
+  .dial-stage.done .node::after { content: ""; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px,-1px); }
 
   /* ============ Receipts ============ */
   .receipt-summary {
-    background: linear-gradient(100deg, var(--accent-soft), var(--gold-soft));
-    border: 1px solid var(--accent-line);
-    border-radius: var(--radius-sm); padding: 17px 19px; font-size: 14.5px; color: var(--text);
-    margin-bottom: 16px; display: flex; gap: 13px; align-items: flex-start;
+    background: var(--accent-soft); border: 1px solid var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    border-radius: var(--radius-sm); padding: 16px 18px; font-size: 14.5px; color: var(--text);
+    margin-bottom: 16px; display: flex; gap: 12px; align-items: flex-start;
   }
-  .receipt-summary .spark { color: var(--gold); flex: none; font-size: 18px; line-height: 1.4; }
+  .receipt-summary .spark { color: var(--accent-ink); flex: none; font-size: 17px; line-height: 1.4; }
   .receipts { display: flex; flex-direction: column; gap: 9px; }
   .receipt {
     display: flex; align-items: center; gap: 13px; background: var(--surface-2);
-    border: 1px solid var(--border-c); border-radius: var(--radius-sm); padding: 12px 16px; font-size: 14px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; font-size: 14px; color: var(--text);
   }
   .receipt .ico { font-size: 16px; flex: none; }
   .receipt .meta { color: var(--text-faint); font-size: 12.5px; margin-top: 2px; }
   .receipt .grow { flex: 1; min-width: 0; }
 
   .banner { border-radius: var(--radius-sm); padding: 13px 16px; font-size: 14px; display: flex; gap: 11px; align-items: flex-start; margin-bottom: 10px; }
-  .banner.warn { background: var(--warn-soft); border: 1px solid rgba(251,191,36,0.3); color: #fde9b3; }
-  .banner.info { background: var(--surface-2); border: 1px solid var(--border-c); color: var(--text-dim); }
+  .banner.warn { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); color: var(--warn); }
+  .banner.info { background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--accent-2) 35%, transparent); color: var(--text); }
+
+  /* ============ Schedule range ============ */
+  .range-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .range-bar .section-title { margin: 0; }
+  .range-fields { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-left: auto; }
+  .range-fields .field { gap: 5px; }
+  .range-fields .input { padding: 9px 12px; font-size: 14px; }
 
   /* ============ Timeline ============ */
   .tl-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
@@ -218,245 +331,393 @@
   .legend .sw.u { background: var(--surface-3); border: 1px solid var(--border-2); }
 
   .day-group { margin-bottom: 18px; }
-  .day-label { font-family: var(--serif); font-size: 12.5px; font-weight: 600; letter-spacing: 1.5px; color: var(--text-dim); text-transform: uppercase; padding: 0 2px 10px; }
+  .day-label { font-size: 12.5px; font-weight: 700; letter-spacing: .5px; color: var(--text-faint); text-transform: uppercase; padding: 0 2px 10px; }
   .ev {
     display: grid; grid-template-columns: 88px 1fr auto; gap: 14px; align-items: center;
-    padding: 13px 16px; border-radius: 12px; background: var(--surface-2);
-    border: 1px solid var(--border-c); margin-bottom: 8px; position: relative;
+    padding: 13px 16px; border-radius: 12px; background: var(--surface);
+    border: 1px solid var(--border); margin-bottom: 8px; position: relative;
   }
   .ev .time { font-size: 12.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; line-height: 1.35; }
-  .ev .title { font-size: 14.5px; font-weight: 500; }
-  .ev .badge { font-size: 10.5px; font-weight: 700; letter-spacing: .5px; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
-  .ev.user .badge { background: var(--surface-3); color: var(--text-faint); }
+  .ev .title { font-size: 14.5px; font-weight: 600; color: var(--text); }
+  .ev .badge { font-size: 10.5px; font-weight: 700; letter-spacing: .3px; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+  .ev.user .badge { background: var(--surface-2); color: var(--text-faint); border: 1px solid var(--border); }
   .ev.kairos {
-    background: linear-gradient(100deg, var(--accent-soft), rgba(56,189,248,0.05));
-    border-color: var(--accent-line);
-    box-shadow: inset 3px 0 0 var(--accent), 0 8px 26px -16px rgba(45,212,191,0.85);
+    background: linear-gradient(100deg, var(--accent-soft), var(--blue-soft));
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    box-shadow: inset 4px 0 0 var(--accent);
   }
-  .ev.kairos .title { color: #fff; }
-  .ev.kairos .time { color: var(--accent); }
-  .ev.kairos .badge { background: var(--grad); color: #04221e; }
+  .ev.kairos .time { color: var(--accent-ink); }
+  .ev.kairos .badge { background: var(--grad); color: #fff; }
   .ev.kairos .title::before { content: "✦ "; color: var(--accent); }
 
   /* ============ Drafts (Lane B) ============ */
-  .draft { background: var(--surface-2); border: 1px solid var(--border-2); border-radius: var(--radius-sm); padding: 18px 19px; margin-bottom: 13px; }
+  .draft { background: var(--surface); border: 1px solid var(--border-2); border-radius: var(--radius-sm); padding: 18px 19px; margin-bottom: 13px; }
   .draft-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
-  .draft-status { font-size: 10.5px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; padding: 4px 11px; border-radius: 999px; }
+  .draft-status { font-size: 10.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; padding: 4px 11px; border-radius: 999px; }
   .draft-status.proposed { background: var(--warn-soft); color: var(--warn); }
-  .draft-status.confirmed { background: var(--accent-soft); color: var(--accent); }
+  .draft-status.confirmed { background: var(--accent-soft); color: var(--accent-ink); }
   .draft .to { font-size: 12.5px; color: var(--text-faint); }
-  .draft .subject { font-weight: 600; font-size: 15px; margin: 2px 0 8px; }
-  .draft .body { white-space: pre-wrap; font-size: 13.5px; color: var(--text-dim); background: rgba(6,9,14,0.65); border: 1px solid var(--border-c); border-radius: 10px; padding: 13px 15px; max-height: 220px; overflow: auto; }
+  .draft .subject { font-weight: 700; font-size: 15px; margin: 2px 0 8px; color: var(--text); }
+  .draft .body { white-space: pre-wrap; font-size: 13.5px; color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 13px 15px; max-height: 220px; overflow: auto; }
   .draft .nosend { font-size: 12px; color: var(--text-faint); margin: 11px 0 0; display: flex; align-items: center; gap: 7px; }
   .draft-actions { display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap; }
   .edit-form { margin-top: 13px; display: none; flex-direction: column; gap: 10px; }
   .edit-form.open { display: flex; }
   .edit-form textarea.input { resize: vertical; min-height: 110px; font-size: 13.5px; }
+  .drafts-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .draft-section-title { font-size: 12.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-faint); margin: 22px 0 12px; }
 
   .empty { text-align: center; color: var(--text-faint); padding: 30px 16px; font-size: 14px; }
   .muted { color: var(--text-dim); }
 
-  /* ============ Footer ============ */
+  /* ============ Gate demo + access notice ============ */
+  .gate-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .access-note { font-size: 12.5px; color: var(--text-faint); max-width: 500px; margin: 22px auto 0; line-height: 1.65; }
+  .access-note a { color: var(--accent-ink); font-weight: 600; }
+
+  /* ============ Modal (guided preview) ============ */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 60; background: rgba(8,12,18,0.55);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    display: grid; place-items: center; padding: 20px; animation: fadeIn .2s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal {
+    position: relative; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-lg); max-width: 580px; width: 100%;
+    max-height: 86vh; overflow: auto; padding: 30px 28px; animation: viewIn .25s ease both;
+  }
+  .modal .kicker {
+    display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--accent-ink);
+    background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    padding: 5px 12px; border-radius: 999px;
+  }
+  .modal h2 { margin: 12px 0 6px; font-size: 23px; font-weight: 800; color: var(--text); }
+  .modal-close {
+    position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border-radius: 9px;
+    background: var(--surface-2); color: var(--text-dim); font-size: 15px; line-height: 1;
+    border: 1px solid var(--border); cursor: pointer; transition: all .15s;
+  }
+  .modal-close:hover { background: var(--surface-3); color: var(--text); }
+  .demo-example { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 18px; margin: 16px 0; }
+  .demo-example .demo-goal { font-weight: 700; color: var(--text); margin: 0 0 12px; }
+  .demo-step { display: flex; gap: 11px; align-items: flex-start; margin: 9px 0; font-size: 14px; color: var(--text-dim); }
+  .demo-step .n { flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--grad); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+  .demo-step b { color: var(--text); }
+  .demo-block { display: flex; align-items: center; gap: 10px; background: linear-gradient(100deg, var(--accent-soft), var(--blue-soft)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-left: 4px solid var(--accent); border-radius: 10px; padding: 10px 13px; font-size: 13.5px; margin-top: 8px; color: var(--text); }
+  .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+
+  /* ============ Connect gate ============ */
+  .gate { text-align: center; padding: 50px 22px; }
+  .gate .gico { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 16px; background: var(--accent-soft); display: grid; place-items: center; color: var(--accent-ink); }
+  .gate h2 { font-size: 24px; margin: 0 0 10px; font-weight: 800; color: var(--text); }
+  .gate p { color: var(--text-dim); margin: 0 auto 24px; font-size: 14.5px; max-width: 460px; }
+
+  /* ============ Footer controls + undo progress ============ */
   .footer-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 24px; flex-wrap: wrap; }
   .footer-bar .note { font-size: 12.5px; color: var(--text-faint); max-width: 560px; }
+
+  .undo-status {
+    margin-top: 16px; border-radius: var(--radius-sm); padding: 16px 18px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 14px; font-size: 14.5px; color: var(--text);
+  }
+  .undo-status .mini-spin {
+    width: 22px; height: 22px; flex: none; border-radius: 50%;
+    border: 3px solid var(--surface-3); border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  .undo-status.done { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .undo-status .check {
+    width: 22px; height: 22px; flex: none; border-radius: 50%; background: var(--accent);
+    display: grid; place-items: center;
+  }
+  .undo-status .check::after { content: ""; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px,-1px); }
+  .undo-status .ubar { flex: 1; height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+  .undo-status .ubar > i { display: block; height: 100%; width: 40%; border-radius: 999px; background: var(--grad); animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+  .pagefoot { text-align: center; padding: 40px 16px 8px; color: var(--text-faint); font-size: 12.5px; }
 
   /* ============ Toast ============ */
   #toast {
     position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(20px);
-    background: rgba(29,40,56,0.95); border: 1px solid var(--border-2); color: var(--text);
-    padding: 13px 21px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow);
+    background: var(--toast-bg); color: var(--toast-fg);
+    padding: 13px 21px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow-lg);
     opacity: 0; pointer-events: none; transition: all .25s ease; z-index: 50; max-width: 90vw;
-    backdrop-filter: blur(10px);
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  #toast.err { border-color: rgba(244,131,126,0.5); }
+  #toast.err { background: #b3261e; color: #fff; }
 
-  /* ============ Connect gate ============ */
-  .gate { text-align: center; padding: 46px 22px; }
-  .gate .laurel { font-size: 30px; color: var(--gold); opacity: .85; margin-bottom: 8px; letter-spacing: 6px; }
-  .gate h2 { font-family: var(--serif); font-size: 26px; margin: 0 0 10px; letter-spacing: .5px; color: #fff; }
-  .gate p { color: var(--text-dim); margin: 0 auto 24px; font-size: 14.5px; max-width: 460px; }
-
-  @media (max-width: 680px) {
+  @media (max-width: 720px) {
+    .feature-grid, .steps { grid-template-columns: 1fr; }
+    .tech-list { grid-template-columns: 1fr; }
     .field-row { grid-template-columns: 1fr; }
+    .range-fields { margin-left: 0; width: 100%; }
     .ev { grid-template-columns: 74px 1fr; }
     .ev .badge { grid-column: 2; justify-self: start; }
-    header { padding-bottom: 12px; }
-    .brand .name { font-size: 25px; }
+    .nav .navlink { padding: 9px 10px; }
+    .brand .name { font-size: 20px; }
   }
 
-  /* ============ Respect reduced-motion ============ */
   @media (prefers-reduced-motion: reduce) {
-    .bg .wash, .bg .dialmotif,
-    .dial .hand-second, .dial .hand-hour, .dial .sweep { animation: none !important; }
+    .blob { animation: none !important; }
+    .spinner svg, .undo-status .mini-spin, .undo-status .ubar > i { animation: none !important; }
+    .view { animation: none !important; }
+    body { transition: none !important; }
   }
 </style>
 </head>
 <body>
 
-<!-- Animated background motif -->
+<!-- Subtle animated background -->
 <div class="bg" aria-hidden="true">
-  <div class="wash"></div>
-  <svg class="dialmotif" viewBox="0 0 1000 1000" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <radialGradient id="mg" cx="50%" cy="50%" r="50%">
-        <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.10"/>
-        <stop offset="60%" stop-color="#38bdf8" stop-opacity="0.05"/>
-        <stop offset="100%" stop-color="#e3c27e" stop-opacity="0.04"/>
-      </radialGradient>
-    </defs>
-    <g stroke="url(#mg)" stroke-width="1.2">
-      <circle cx="500" cy="500" r="480"/>
-      <circle cx="500" cy="500" r="400"/>
-      <circle cx="500" cy="500" r="300"/>
-      <circle cx="500" cy="500" r="210"/>
-      <!-- 60 tick marks via dashed ring -->
-      <circle cx="500" cy="500" r="455" stroke-dasharray="2 45.6" stroke-width="10"/>
-      <circle cx="500" cy="500" r="455" stroke-dasharray="4 234.6" stroke-width="18"/>
-    </g>
-    <!-- faint constellation lines / radial spokes -->
-    <g stroke="url(#mg)" stroke-width="1">
-      <line x1="500" y1="20" x2="500" y2="980"/>
-      <line x1="20" y1="500" x2="980" y2="500"/>
-      <line x1="146" y1="146" x2="854" y2="854"/>
-      <line x1="854" y1="146" x2="146" y2="854"/>
-    </g>
-    <g fill="#e3c27e" opacity="0.5">
-      <circle cx="500" cy="45" r="3"/><circle cx="780" cy="220" r="2.5"/>
-      <circle cx="930" cy="540" r="3"/><circle cx="690" cy="820" r="2.5"/>
-      <circle cx="300" cy="900" r="3"/><circle cx="95" cy="610" r="2.5"/>
-      <circle cx="170" cy="300" r="3"/>
-    </g>
-  </svg>
-  <div class="grain"></div>
-  <div class="scrim"></div>
+  <span class="blob b1"></span>
+  <span class="blob b2"></span>
+  <span class="blob b3"></span>
 </div>
 
-<div class="wrap">
-
-  <header>
-    <div class="brand">
+<header>
+  <div class="header-in">
+    <button class="brand" id="brand-home" aria-label="Kairos home">
       <svg class="mark" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <defs>
           <linearGradient id="ring" x1="2" y1="2" x2="30" y2="30" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#e3c27e"/><stop offset="1" stop-color="#c9a24a"/>
-          </linearGradient>
-          <linearGradient id="bolt" x1="10" y1="7" x2="22" y2="25" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#2dd4bf"/><stop offset="1" stop-color="#38bdf8"/>
+            <stop stop-color="#0e8f82"/><stop offset="1" stop-color="#2563eb"/>
           </linearGradient>
         </defs>
-        <circle cx="16" cy="16" r="13" stroke="url(#ring)" stroke-width="2.2"/>
-        <circle cx="16" cy="16" r="13" stroke="url(#ring)" stroke-width="0.6" stroke-dasharray="0.5 2.77" opacity="0.8"/>
-        <path d="M17.5 7 L10 17.5 H15.5 L14.5 25 L22 13.5 H16 Z" fill="url(#bolt)"/>
+        <circle cx="16" cy="16" r="13" stroke="url(#ring)" stroke-width="2.4"/>
+        <path d="M16 8.5 V16 L21 19" stroke="url(#ring)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <div>
-        <div class="name">KAIROS</div>
-        <div class="tag">The decisive moment to act</div>
-      </div>
-    </div>
-    <div class="auth" id="auth"><!-- filled by JS --></div>
-  </header>
-
-  <!-- Connect gate (logged out) -->
-  <section class="card gate" id="gate" hidden>
-    <div class="laurel">⚜</div>
-    <h2>Seize the decisive moment</h2>
-    <p>Kairos reads your calendar, plans the work, and books focus blocks so you finish before the deadline — autonomously.</p>
-    <button class="btn" id="gate-connect">
-      <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M21.35 11.1h-9.18v2.92h5.27c-.23 1.4-1.6 4.1-5.27 4.1-3.17 0-5.76-2.62-5.76-5.86s2.59-5.86 5.76-5.86c1.81 0 3.02.77 3.71 1.43l2.53-2.44C18.9 3.4 16.78 2.4 14.17 2.4 9.06 2.4 4.92 6.54 4.92 11.66s4.14 9.26 9.25 9.26c5.34 0 8.88-3.75 8.88-9.04 0-.6-.07-1.06-.16-1.52z"/></svg>
-      Connect Google Calendar
+      <span class="name">KAIROS</span>
     </button>
-  </section>
-
-  <!-- Command card (logged in) -->
-  <section class="card command" id="command" hidden>
-    <p class="lead">What needs to get done — and by when?</p>
-    <p class="sub">Kairos will decompose it, find your free time, and book the blocks itself.</p>
-    <div class="field-row">
-      <div class="field">
-        <label for="goal">Goal</label>
-        <input class="input" id="goal" type="text" placeholder="e.g. Finish the pitch deck for the investor meeting" />
-      </div>
-      <div class="field">
-        <label for="deadline">Deadline</label>
-        <input class="input" id="deadline" type="datetime-local" />
-      </div>
+    <div class="nav">
+      <button class="navlink" id="nav-home" data-nav="landing">Home</button>
+      <button class="navlink" id="nav-about" data-nav="about">About</button>
+      <button class="icon-btn" id="theme-toggle" aria-label="Toggle dark mode"></button>
+      <div class="auth" id="auth"><!-- filled by JS --></div>
     </div>
-    <div class="run-row">
-      <button class="btn" id="run">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-        Run Kairos
-      </button>
-      <span class="run-hint">Acts on your real calendar · everything is reversible</span>
-    </div>
-  </section>
-
-  <!-- Working state: the clock -->
-  <section class="card working" id="working" hidden>
-    <div class="eyebrow">Tempus fugit</div>
-    <h3>Kairos is turning time in your favor…</h3>
-    <div class="dial-wrap">
-      <svg class="dial" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <defs>
-          <linearGradient id="dring" x1="0" y1="0" x2="200" y2="200" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#e3c27e"/><stop offset="1" stop-color="#c9a24a"/>
-          </linearGradient>
-          <linearGradient id="dsweep" x1="100" y1="0" x2="100" y2="200" gradientUnits="userSpaceOnUse">
-            <stop stop-color="#2dd4bf" stop-opacity="0.9"/><stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
-          </linearGradient>
-        </defs>
-        <!-- faces -->
-        <circle cx="100" cy="100" r="92" stroke="url(#dring)" stroke-width="1.4" opacity="0.55"/>
-        <circle cx="100" cy="100" r="84" stroke="#38bdf8" stroke-opacity="0.18" stroke-width="1"/>
-        <!-- 60 minor ticks -->
-        <circle cx="100" cy="100" r="84" stroke="#9fb3c8" stroke-opacity="0.25" stroke-width="6"
-                stroke-dasharray="0.8 7.99"/>
-        <!-- 12 major ticks (gold) -->
-        <circle cx="100" cy="100" r="84" stroke="url(#dring)" stroke-width="9"
-                stroke-dasharray="2 41.97"/>
-        <!-- smooth sweeping comet arc -->
-        <g class="sweep">
-          <circle cx="100" cy="100" r="74" stroke="url(#dsweep)" stroke-width="3"
-                  stroke-linecap="round" stroke-dasharray="120 345" transform="rotate(-90 100 100)"/>
-        </g>
-        <!-- hour hand -->
-        <g class="hand-hour">
-          <line x1="100" y1="100" x2="100" y2="56" stroke="#cfe9e4" stroke-width="3.5" stroke-linecap="round"/>
-        </g>
-        <!-- ticking second hand (gold) -->
-        <g class="hand-second">
-          <line x1="100" y1="108" x2="100" y2="34" stroke="url(#dring)" stroke-width="2" stroke-linecap="round"/>
-          <circle cx="100" cy="34" r="3.4" fill="#e3c27e"/>
-        </g>
-        <circle cx="100" cy="100" r="5" fill="#e3c27e"/>
-        <circle cx="100" cy="100" r="5" stroke="#06080d" stroke-width="1.2"/>
-      </svg>
-      <div class="dial-center"><span class="glyph">ΚΑΙΡΟΣ</span></div>
-    </div>
-    <div class="dial-stages" id="stages">
-      <div class="dial-stage" data-i="0"><span class="node"></span>Perceiving your calendar &amp; free time</div>
-      <div class="dial-stage" data-i="1"><span class="node"></span>Weighing time remaining vs. work remaining</div>
-      <div class="dial-stage" data-i="2"><span class="node"></span>Planning focus blocks before the deadline</div>
-      <div class="dial-stage" data-i="3"><span class="node"></span>Booking your schedule</div>
-    </div>
-  </section>
-
-  <!-- Results -->
-  <section id="results" hidden>
-    <div class="card" id="receipt-card"></div>
-    <div class="card" id="timeline-card"></div>
-    <div class="card" id="drafts-card" hidden></div>
-  </section>
-
-  <!-- Footer controls -->
-  <div class="footer-bar" id="footer" hidden>
-    <div class="note">Kairos only ever creates clearly-marked focus blocks and never touches your own events. Use “Undo all” to reset to a clean slate for a fresh demo.</div>
-    <button class="btn danger sm" id="undo-all">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62A7.5 7.5 0 0 1 19.78 14h2.07A9.5 9.5 0 0 0 12.5 8z"/></svg>
-      Undo all
-    </button>
   </div>
+</header>
 
+<div class="wrap">
+
+  <!-- ============ LANDING / HERO ============ -->
+  <section class="view" id="view-landing">
+    <div class="hero">
+      <span class="kicker">⚡ Your AI deadline co-pilot</span>
+      <h1>KAIROS</h1>
+      <p class="hook">Need help managing your schedule? Kairos has you covered.</p>
+      <p class="sub">An AI that proactively plans, prioritizes, and books your time on Google Calendar — so you beat every deadline instead of racing it.</p>
+      <div class="cta-row">
+        <button class="btn lg" id="get-started">Get started</button>
+        <button class="btn ghost lg" id="hero-about">Learn more</button>
+      </div>
+
+      <div class="feature-grid">
+        <div class="feature">
+          <div class="fic">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          </div>
+          <h3>Plans ahead</h3>
+          <p>Reads your calendar and free/busy, then maps the work that still has to happen before the deadline.</p>
+        </div>
+        <div class="feature">
+          <div class="fic">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h10M4 18h6"/></svg>
+          </div>
+          <h3>Prioritizes</h3>
+          <p>Breaks a big goal into ordered subtasks and weighs time remaining against work remaining.</p>
+        </div>
+        <div class="feature">
+          <div class="fic">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15l2 2 4-4"/></svg>
+          </div>
+          <h3>Books it for you</h3>
+          <p>Autonomously schedules focus blocks on your real calendar — every change clearly marked and reversible.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ABOUT ============ -->
+  <section class="view about" id="view-about" hidden>
+    <h2>What is Kairos?</h2>
+    <p class="lead">Kairos — Greek for “the decisive moment” — is a proactive AI productivity agent for “The Last-Minute Life Saver.” Instead of passive reminders, it plans your work, prioritizes it, and autonomously books the time on your calendar so deadlines stop sneaking up on you.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <h3>Perceive</h3>
+        <p>Kairos reads your Google Calendar events and free/busy windows to understand exactly what time you actually have.</p>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <h3>Plan</h3>
+        <p>Using Gemini, it breaks your goal into subtasks, weighs the deadline against your free time, and decides where focus blocks should go.</p>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <h3>Act</h3>
+        <p>It books the focus blocks on your calendar within your working hours — and if a deadline looks impossible, it drafts a heads-up message for you to review.</p>
+      </div>
+    </div>
+
+    <div class="tech-card">
+      <h3>Built on Google technology</h3>
+      <p>Kairos runs natively in Google’s ecosystem — it’s a productivity tool that lives where your schedule already does.</p>
+      <div class="tech-list">
+        <div class="tech"><span class="tic">📅</span><div><b>Google Calendar API</b><span>The action surface — reads free/busy and books the focus blocks.</span></div></div>
+        <div class="tech"><span class="tic">🤖</span><div><b>Gemini on Vertex AI</b><span>The reasoning engine — plans, prioritizes, and decides via function calling.</span></div></div>
+        <div class="tech"><span class="tic">🔥</span><div><b>Firestore</b><span>Durable source of truth for tasks, the plan ledger, and the action log.</span></div></div>
+        <div class="tech"><span class="tic">☁️</span><div><b>Cloud Run</b><span>Hosts the FastAPI backend, scaling to zero between runs.</span></div></div>
+        <div class="tech"><span class="tic">🔐</span><div><b>Google OAuth 2.0</b><span>Secure, minimal-scope access to your calendar — never to Gmail.</span></div></div>
+        <div class="tech"><span class="tic">↩️</span><div><b>Fully reversible</b><span>Kairos only touches blocks it created — one click resets everything.</span></div></div>
+      </div>
+    </div>
+
+    <div class="about-cta-row">
+      <button class="btn lg" id="about-cta">Get started</button>
+    </div>
+  </section>
+
+  <!-- ============ APP (input) ============ -->
+  <section class="view" id="view-app" hidden>
+
+    <div class="app-head">
+      <h2>Your workspace</h2>
+      <p>Tell Kairos what needs to get done — it handles the scheduling.</p>
+    </div>
+
+    <!-- Connect gate (logged out) -->
+    <section class="card gate" id="gate" hidden>
+      <div class="gico">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      </div>
+      <h2>Connect your Google Calendar</h2>
+      <p>Kairos reads your calendar, plans the work, and books focus blocks so you finish before the deadline — autonomously.</p>
+      <div class="gate-actions">
+        <button class="gbtn" id="gate-connect">
+          <svg class="gicon" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.41 5.41 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+          Sign in with Google
+        </button>
+        <button class="btn ghost" id="gate-demo">▷ Try Demo</button>
+      </div>
+      <p class="access-note">🔒 Kairos is in testing mode and isn't Google-verified yet, so live sign-in works only for approved test users. To try it with your own Google Calendar, email the developer at <a href="mailto:soumyanayak123456789@gmail.com">soumyanayak123456789@gmail.com</a> to be added as a test user. Or click <strong>Try Demo</strong> for a guided preview.</p>
+    </section>
+
+    <!-- Command card (logged in) -->
+    <section class="card command" id="command" hidden>
+      <p class="lead">What needs to get done — and by when?</p>
+      <p class="sub">Kairos will decompose it, find your free time, and book the blocks itself.</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="goal">Goal</label>
+          <input class="input" id="goal" type="text" placeholder="e.g. Finish the pitch deck for the investor meeting" />
+        </div>
+        <div class="field">
+          <label for="deadline">Deadline</label>
+          <input class="input" id="deadline" type="datetime-local" />
+        </div>
+      </div>
+      <div class="run-row">
+        <button class="btn" id="run">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          Run Kairos
+        </button>
+        <button class="btn ghost" id="view-schedule">View my schedule</button>
+        <span class="run-hint">Acts on your real calendar · everything is reversible</span>
+      </div>
+    </section>
+
+  </section>
+
+  <!-- ============ RESULTS (working + receipts + timeline + drafts) ============ -->
+  <section class="view" id="view-results" hidden>
+
+    <div class="results-head">
+      <h2 id="results-title">Kairos results</h2>
+      <button class="btn ghost sm" id="run-another">＋ Run another goal</button>
+    </div>
+
+    <!-- Working state: clean progress -->
+    <section class="card working" id="working" hidden>
+      <div class="spinner" aria-hidden="true">
+        <svg viewBox="0 0 50 50"><circle class="track" cx="25" cy="25" r="20"/><circle class="arc" cx="25" cy="25" r="20"/></svg>
+      </div>
+      <h3>Kairos is planning your schedule…</h3>
+      <p class="wsub">Working through your calendar to book the time you need.</p>
+      <div class="stages" id="stages">
+        <div class="dial-stage" data-i="0"><span class="node"></span>Reading your calendar &amp; free time</div>
+        <div class="dial-stage" data-i="1"><span class="node"></span>Weighing time remaining vs. work remaining</div>
+        <div class="dial-stage" data-i="2"><span class="node"></span>Planning focus blocks before the deadline</div>
+        <div class="dial-stage" data-i="3"><span class="node"></span>Booking your schedule</div>
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section id="results" hidden>
+      <div class="card" id="receipt-card"></div>
+
+      <!-- Schedule date range -->
+      <div class="card range-bar" id="range-bar" hidden>
+        <p class="section-title">Schedule range</p>
+        <div class="range-fields">
+          <div class="field">
+            <label for="range-from">From</label>
+            <input class="input" id="range-from" type="date" />
+          </div>
+          <div class="field">
+            <label for="range-to">To</label>
+            <input class="input" id="range-to" type="date" />
+          </div>
+          <button class="btn ghost sm" id="range-apply">Apply</button>
+        </div>
+      </div>
+
+      <div class="card" id="timeline-card"></div>
+      <div class="card" id="drafts-card" hidden></div>
+    </section>
+
+    <!-- Footer controls -->
+    <div class="footer-bar" id="footer" hidden>
+      <div class="note">Kairos only ever creates clearly-marked focus blocks and never touches your own events. Use “Undo all” to reset to a clean slate for a fresh demo.</div>
+      <button class="btn danger sm" id="undo-all">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62A7.5 7.5 0 0 1 19.78 14h2.07A9.5 9.5 0 0 0 12.5 8z"/></svg>
+        Undo all
+      </button>
+    </div>
+
+    <!-- Undo progress / success -->
+    <div class="undo-status" id="undo-status" hidden></div>
+
+  </section>
+
+  <div class="pagefoot">Kairos · The Last-Minute Life Saver · built on Google Cloud</div>
+
+</div>
+
+<!-- Guided preview modal (demo / judge access) -->
+<div class="modal-backdrop" id="demo-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="demo-title">
+    <button class="modal-close" id="demo-close" aria-label="Close preview">✕</button>
+    <span class="kicker">▷ Guided preview</span>
+    <h2 id="demo-title">How Kairos saves your deadline</h2>
+    <p class="muted" style="margin:0 0 4px">A quick walkthrough with a sample goal — no calendar access needed. Live use on your own calendar needs test-user access (see the sign-in panel).</p>
+    <div class="demo-example">
+      <p class="demo-goal">🎯 “Finish the pitch deck for the investor meeting” — due Friday 6:00 PM</p>
+      <div class="demo-step"><span class="n">1</span><div><b>Perceive</b> — Kairos reads your calendar: meetings Tue–Wed, evenings free, Thursday afternoon open.</div></div>
+      <div class="demo-step"><span class="n">2</span><div><b>Plan</b> — It splits the deck into outline → draft → design → rehearse, and weighs each against the time remaining.</div></div>
+      <div class="demo-step"><span class="n">3</span><div><b>Act</b> — It books focus blocks into your free time, each clearly marked as a Kairos block:</div></div>
+      <div class="demo-block">✦ Deck — outline &amp; draft · Thu 2:00–4:00 PM</div>
+      <div class="demo-block">✦ Deck — design &amp; rehearse · Fri 10:00 AM–12:00 PM</div>
+    </div>
+    <p class="muted" style="font-size:13px">If the deadline looked impossible, Kairos would instead draft a heads-up message for you to review — it never sends anything itself.</p>
+    <div class="modal-actions">
+      <button class="btn" id="demo-about">See full details</button>
+      <button class="btn ghost" id="demo-done">Got it</button>
+    </div>
+  </div>
 </div>
 
 <div id="toast"></div>
@@ -491,6 +752,38 @@ const authEl = el("auth"), gateEl = el("gate"), commandEl = el("command");
 const workingEl = el("working"), resultsEl = el("results"), footerEl = el("footer");
 const goalEl = el("goal"), deadlineEl = el("deadline"), runBtn = el("run");
 
+// ---------- theme (session only — no localStorage in this environment) ----------
+let theme = "light";
+const SUN = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/></svg>`;
+const MOON = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z"/></svg>`;
+function applyTheme(t) {
+  theme = t;
+  document.documentElement.setAttribute("data-theme", t);
+  const tt = el("theme-toggle");
+  tt.innerHTML = t === "dark" ? SUN : MOON;
+  tt.setAttribute("aria-label", t === "dark" ? "Switch to light mode" : "Switch to dark mode");
+}
+el("theme-toggle").onclick = () => applyTheme(theme === "dark" ? "light" : "dark");
+
+// ---------- view navigation (landing / about / app / results) ----------
+const views = {
+  landing: el("view-landing"), about: el("view-about"),
+  app: el("view-app"), results: el("view-results"),
+};
+function showView(name) {
+  Object.entries(views).forEach(([k, v]) => { v.hidden = (k !== name); });
+  document.querySelectorAll(".navlink").forEach((b) =>
+    b.classList.toggle("active", b.dataset.nav === name));
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+el("brand-home").onclick = () => showView("landing");
+el("nav-home").onclick = () => showView("landing");
+el("nav-about").onclick = () => showView("about");
+el("hero-about").onclick = () => showView("about");
+el("get-started").onclick = () => showView("app");
+el("about-cta").onclick = () => showView("app");
+el("run-another").onclick = () => showView("app");
+
 // ---------- toast ----------
 let toastTimer = null;
 function toast(msg, isErr = false) {
@@ -519,18 +812,25 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+function toDateInput(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// ---------- Google sign-in button markup (shared) ----------
+const GOOGLE_G = `<svg class="gicon" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.41 5.41 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>`;
 
 // ---------- auth / view state ----------
 async function checkAuth() {
   try {
     const me = await api("/me");
-    if (me && me.logged_in) return setLoggedIn(me);
+    if (me && me.logged_in) { setLoggedIn(me); showView("app"); return; }
   } catch (e) { /* fall through to logged-out */ }
   setLoggedOut();
 }
 
 function setLoggedOut() {
-  authEl.innerHTML = `<button class="btn sm" id="hdr-connect">Connect Google Calendar</button>`;
+  authEl.innerHTML = `<button class="gbtn sm" id="hdr-connect">${GOOGLE_G}Sign in</button>`;
   el("hdr-connect").onclick = () => (window.location.href = "/login");
   gateEl.hidden = false;
   commandEl.hidden = true;
@@ -546,19 +846,68 @@ function setLoggedIn(me) {
   el("hdr-reconnect").onclick = () => (window.location.href = "/login");
   gateEl.hidden = true;
   commandEl.hidden = false;
-  footerEl.hidden = false;
   // Default deadline: tomorrow 18:00 local.
   if (!deadlineEl.value) {
     const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0);
     const pad = (n) => String(n).padStart(2, "0");
     deadlineEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-  loadTimeline();   // show the current calendar right away
+  setRangeDefaults();
 }
 
 el("gate-connect").onclick = () => (window.location.href = "/login");
 
-// ---------- working animation (clock stages) ----------
+// ---------- demo / guided preview modal ----------
+const demoModal = el("demo-modal");
+function openDemo() { demoModal.hidden = false; document.body.style.overflow = "hidden"; }
+function closeDemo() { demoModal.hidden = true; document.body.style.overflow = ""; }
+el("gate-demo").onclick = openDemo;
+el("demo-close").onclick = closeDemo;
+el("demo-done").onclick = closeDemo;
+el("demo-about").onclick = () => { closeDemo(); showView("about"); };
+demoModal.addEventListener("click", (e) => { if (e.target === demoModal) closeDemo(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !demoModal.hidden) closeDemo(); });
+
+// ---------- clipboard helper (secure-context API + fallback) ----------
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return ok;
+  } catch { return false; }
+}
+
+// ---------- schedule date range ----------
+function setRangeDefaults() {
+  const from = el("range-from"), to = el("range-to");
+  if (from && !from.value) from.value = toDateInput(new Date());
+  if (to && !to.value) { const d = new Date(); d.setDate(d.getDate() + 3); to.value = toDateInput(d); }
+}
+el("range-apply").onclick = () => loadTimeline();
+el("range-from").addEventListener("change", () => loadTimeline());
+el("range-to").addEventListener("change", () => loadTimeline());
+
+// "View my schedule" — open results view showing only the timeline (no run).
+function openSchedule() {
+  showView("results");
+  el("results-title").textContent = "Your schedule";
+  workingEl.hidden = true;
+  el("receipt-card").hidden = true;
+  el("drafts-card").hidden = true;
+  el("undo-status").hidden = true;
+  resultsEl.hidden = false;
+  footerEl.hidden = false;
+  setRangeDefaults();
+  loadTimeline();
+  loadDrafts();
+}
+el("view-schedule").onclick = openSchedule;
+
+// ---------- working animation (progress stages) ----------
 let workTimer = null;
 function setStage(active) {
   document.querySelectorAll("#stages .dial-stage").forEach((s) => {
@@ -593,6 +942,12 @@ async function runKairos() {
     if (diffH > 0) hours = Math.min(720, Math.max(48, Math.ceil(diffH) + 12));
   }
 
+  // Move to the dedicated results view, show working animation.
+  showView("results");
+  el("results-title").textContent = "Kairos results";
+  el("undo-status").hidden = true;
+  footerEl.hidden = false;
+  setRangeDefaults();
   runBtn.disabled = true;
   showWorking();
   try {
@@ -678,6 +1033,7 @@ function renderError(msg) {
      <div class="banner warn"><span>⚠️</span><div>${esc(msg)}</div></div>
      <div class="muted" style="font-size:13px">Please try again. If this keeps happening, re-connect your Google account from the header.</div>`;
   el("receipt-card").hidden = false;
+  el("range-bar").hidden = true;
   el("timeline-card").hidden = true;
   el("drafts-card").hidden = true;
 }
@@ -685,8 +1041,16 @@ function renderError(msg) {
 // ---------- timeline ----------
 async function loadTimeline(runResult) {
   const card = el("timeline-card");
+  // Build the query from the From/To range pickers (falls back to a window).
+  const fromV = el("range-from") && el("range-from").value;
+  const toV = el("range-to") && el("range-to").value;
+  let qs = "hours=168";
+  if (fromV && toV) {
+    if (new Date(toV) < new Date(fromV)) { toast("“To” date must be after “From”.", true); return; }
+    qs = `start=${encodeURIComponent(fromV)}&end=${encodeURIComponent(toV)}`;
+  }
   try {
-    const data = await api("/ui/timeline?hours=168");
+    const data = await api(`/ui/timeline?${qs}`);
     const events = data.events || [];
 
     // Belt-and-suspenders: also flag any event just created this run.
@@ -696,6 +1060,8 @@ async function loadTimeline(runResult) {
         .map((a) => a.result && a.result.event_id).filter(Boolean));
       events.forEach((ev) => { if (fresh.has(ev.id)) ev.kairos = true; });
     }
+
+    el("range-bar").hidden = false;
 
     let html = `
       <div class="tl-head">
@@ -707,7 +1073,7 @@ async function loadTimeline(runResult) {
       </div>`;
 
     if (!events.length) {
-      html += `<div class="empty">No events in the window yet. Run Kairos to plan and book your focus blocks.</div>`;
+      html += `<div class="empty">No events in this range. Adjust the dates above, or run Kairos to plan and book your focus blocks.</div>`;
       card.innerHTML = html; card.hidden = false; resultsEl.hidden = false; return;
     }
 
@@ -744,49 +1110,80 @@ async function loadTimeline(runResult) {
 }
 
 // ---------- drafts (Lane B) ----------
+function draftCardHTML(d) {
+  const proposed = d.status === "proposed";
+  const actions = proposed
+    ? `<button class="btn sm" data-act="confirm">Confirm</button>
+       <button class="btn ghost sm" data-act="edit">Edit</button>
+       <button class="btn ghost sm" data-act="dismiss">Dismiss</button>`
+    : `<button class="btn sm" data-act="copy">Copy</button>
+       <button class="btn ghost sm" data-act="edit">Edit</button>
+       <button class="btn ghost sm" data-act="dismiss">Dismiss</button>`;
+  return `
+    <div class="draft" data-id="${esc(d.draft_id)}">
+      <div class="draft-top">
+        <span class="to">To: ${esc(d.recipient || "—")}</span>
+        <span class="draft-status ${esc(d.status)}">${proposed ? "Awaiting you" : "Approved"}</span>
+      </div>
+      <div class="subject">${esc(d.subject || "(no subject)")}</div>
+      <div class="body">${esc(d.body || "")}</div>
+      <p class="nosend">🔒 Never sent — copy &amp; send it yourself (Kairos has no Gmail access).</p>
+      <div class="draft-actions">${actions}</div>
+      <div class="edit-form">
+        <input class="input" data-f="recipient" placeholder="Recipient" value="${esc(d.recipient || "")}" />
+        <input class="input" data-f="subject" placeholder="Subject" value="${esc(d.subject || "")}" />
+        <textarea class="input" data-f="body" placeholder="Message body">${esc(d.body || "")}</textarea>
+        <div class="draft-actions">
+          <button class="btn sm" data-act="save">Save changes</button>
+          <button class="btn ghost sm" data-act="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
 async function loadDrafts() {
   const card = el("drafts-card");
   let data;
   try { data = await api("/agent/drafts"); }
   catch { card.hidden = true; return; }
 
-  const drafts = (data.drafts || []).filter((d) => d.status !== "dismissed");
-  if (!drafts.length) { card.hidden = true; card.innerHTML = ""; return; }
+  const all = (data.drafts || []).filter((d) => d.status !== "dismissed");
+  const proposed = all.filter((d) => d.status === "proposed");
+  const approved = all.filter((d) => d.status === "confirmed");
+  if (!all.length) { card.hidden = true; card.innerHTML = ""; return; }
 
-  let html = `<p class="section-title">Rescue drafts · needs your call</p>
-    <div class="banner info" style="margin-bottom:14px"><span>🛟</span><div>A deadline looked at risk, so Kairos drafted a heads-up message. <strong>Nothing is ever sent</strong> — confirming only marks it approved for you to copy &amp; send yourself.</div></div>`;
+  let html = `
+    <div class="drafts-head">
+      <p class="section-title" style="margin:0">Rescue messages</p>
+      <button class="btn ghost sm" id="clear-drafts">Clear drafts</button>
+    </div>
+    <div class="banner info" style="margin-bottom:14px"><span>🛟</span><div>A deadline looked at risk, so Kairos drafted a heads-up message. <strong>Nothing is ever sent</strong> — confirming only marks a draft approved for you to copy &amp; send yourself.</div></div>`;
 
-  drafts.forEach((d) => {
-    const proposed = d.status === "proposed";
-    html += `
-      <div class="draft" data-id="${esc(d.draft_id)}">
-        <div class="draft-top">
-          <span class="to">To: ${esc(d.recipient || "—")}</span>
-          <span class="draft-status ${esc(d.status)}">${proposed ? "Awaiting you" : "Approved"}</span>
-        </div>
-        <div class="subject">${esc(d.subject || "(no subject)")}</div>
-        <div class="body">${esc(d.body || "")}</div>
-        <p class="nosend">🔒 Draft only — Kairos has no send capability (no Gmail access).</p>
-        <div class="draft-actions">
-          ${proposed ? `<button class="btn sm" data-act="confirm">Confirm</button>` : ""}
-          <button class="btn ghost sm" data-act="edit">Edit</button>
-          <button class="btn ghost sm" data-act="dismiss">Dismiss</button>
-        </div>
-        <div class="edit-form">
-          <input class="input" data-f="recipient" placeholder="Recipient" value="${esc(d.recipient || "")}" />
-          <input class="input" data-f="subject" placeholder="Subject" value="${esc(d.subject || "")}" />
-          <textarea class="input" data-f="body" placeholder="Message body">${esc(d.body || "")}</textarea>
-          <div class="draft-actions">
-            <button class="btn sm" data-act="save">Save changes</button>
-            <button class="btn ghost sm" data-act="cancel">Cancel</button>
-          </div>
-        </div>
-      </div>`;
-  });
+  if (proposed.length) {
+    html += `<p class="draft-section-title" style="margin-top:4px">Rescue Drafts · Needs Your Call</p>`;
+    proposed.forEach((d) => { html += draftCardHTML(d); });
+  }
+  if (approved.length) {
+    html += `<p class="draft-section-title">Approved Drafts</p>`;
+    approved.forEach((d) => { html += draftCardHTML(d); });
+  }
 
   card.innerHTML = html;
   card.hidden = false;
   card.querySelectorAll(".draft").forEach(wireDraft);
+
+  // "Clear drafts" — dismisses every current draft (no new endpoint; uses the
+  // existing per-draft dismiss). Calendar events are NOT touched (that's undo-all).
+  const clearBtn = el("clear-drafts");
+  if (clearBtn) clearBtn.onclick = async () => {
+    if (!confirm("Clear all rescue drafts? This dismisses them — your calendar is untouched.")) return;
+    clearBtn.disabled = true;
+    try {
+      await Promise.all(all.map((d) => api(`/agent/draft/${d.draft_id}/dismiss`, { method: "POST" })));
+      toast("Cleared all drafts.");
+      await loadDrafts();
+    } catch (e) { toast(e.message, true); clearBtn.disabled = false; }
+  };
 }
 
 function wireDraft(node) {
@@ -802,9 +1199,21 @@ function wireDraft(node) {
       const a = btn.dataset.act;
       if (a === "edit") { form.classList.add("open"); return; }
       if (a === "cancel") { form.classList.remove("open"); return; }
+      if (a === "copy") {
+        const subject = (node.querySelector(".subject") || {}).textContent || "";
+        const body = (node.querySelector(".body") || {}).textContent || "";
+        copyText(`Subject: ${subject}\n\n${body}`).then((ok) => {
+          if (ok) {
+            const orig = btn.dataset.label || btn.textContent;
+            btn.dataset.label = orig; btn.textContent = "Copied!";
+            setTimeout(() => { btn.textContent = btn.dataset.label; }, 1800);
+          } else toast("Couldn't copy automatically — select the text and copy manually.", true);
+        });
+        return;
+      }
       if (a === "confirm") return act(async () => {
         await api(`/agent/draft/${id}/confirm`, { method: "POST" });
-        toast("Draft approved — copy & send it yourself when ready.");
+        toast("Draft approved — find it under “Approved Drafts”, then copy & send it yourself.");
         await loadDrafts();
       });
       if (a === "dismiss") return act(async () => {
@@ -825,22 +1234,43 @@ function wireDraft(node) {
   });
 }
 
-// ---------- undo all ----------
+// ---------- undo all (with progress + success state) ----------
 el("undo-all").onclick = async () => {
   if (!confirm("Remove all Kairos-created focus blocks and reset the plan? Your own calendar events are never touched.")) return;
   const btn = el("undo-all");
+  const status = el("undo-status");
   btn.disabled = true;
+
+  // In-flight progress indicator.
+  status.className = "undo-status";
+  status.hidden = false;
+  status.innerHTML = `<span class="mini-spin"></span>
+    <div class="grow">Removing Kairos focus blocks…<div class="ubar"><i></i></div></div>`;
+
   try {
     const r = await api("/agent/undo-all", { method: "POST" });
-    toast(`Reset done — removed ${r.events_deleted} Kairos block${r.events_deleted === 1 ? "" : "s"}, cleaned ${r.tasks_deleted} task${r.tasks_deleted === 1 ? "" : "s"}.`);
+    const blocks = r.events_deleted ?? 0;
+    const tasks = r.tasks_deleted ?? 0;
+    // Success state.
+    status.className = "undo-status done";
+    status.innerHTML = `<span class="check"></span>
+      <div>Cleared ${blocks} Kairos block${blocks === 1 ? "" : "s"} — your own events are untouched.${tasks ? ` Cleaned ${tasks} task${tasks === 1 ? "" : "s"}.` : ""}</div>`;
+    toast(`Reset done — removed ${blocks} Kairos block${blocks === 1 ? "" : "s"}.`);
     await loadTimeline();
     await loadDrafts();
     el("receipt-card").hidden = true;
-  } catch (e) { toast(e.message, true); }
-  finally { btn.disabled = false; }
+    setTimeout(() => { status.hidden = true; }, 6000);
+  } catch (e) {
+    status.hidden = true;
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 // ---------- boot ----------
+applyTheme("light");
+showView("landing");
 checkAuth();
 </script>
 </body>
