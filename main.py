@@ -389,6 +389,30 @@ def login():
     return RedirectResponse(auth_url)
 
 
+def _callback_url(request: Request) -> str:
+    """Reconstruct the full callback URL for the OAuth token exchange.
+
+    Cloud Run terminates TLS at its front proxy and forwards to the container
+    over plain HTTP, so ``request.url.scheme`` is "http" even though the user
+    actually arrived over https. oauthlib then rejects the exchange with
+    InsecureTransportError. The proxy tells us the real client-facing scheme via
+    the ``X-Forwarded-Proto`` header (it will be "https" on Cloud Run), so we
+    trust that to restore the correct scheme. For genuine local http (no proxy,
+    no header) the URL is returned unchanged. We do NOT blanket-disable
+    oauthlib's https check — the request really is https; the app just needs to
+    see it.
+    """
+    url = request.url
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto:
+        # May be a comma-separated chain (e.g. "https,http"); the first hop is
+        # the original client-facing scheme.
+        proto = forwarded_proto.split(",")[0].strip()
+        if proto and proto != url.scheme:
+            url = url.replace(scheme=proto)
+    return str(url)
+
+
 @app.get("/oauth2callback")
 def oauth2callback(request: Request):
     """Handle Google's redirect and exchange the code for tokens."""
@@ -410,7 +434,7 @@ def oauth2callback(request: Request):
     flow = _build_flow(state=state)
     flow.code_verifier = code_verifier
     # Exchange the authorization code (carried on the callback URL) for tokens.
-    flow.fetch_token(authorization_response=str(request.url))
+    flow.fetch_token(authorization_response=_callback_url(request))
     creds = flow.credentials
 
     # Identify the user (sub/email/name) using the fresh access token.
