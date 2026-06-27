@@ -22,33 +22,35 @@
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg:        #f6f8fc;
-    --surface:   #ffffff;
-    --surface-2: #f1f3f4;
-    --surface-3: #e3e6ea;
-    --border:    #dfe3e8;
-    --border-2:  #cdd2d8;
-    --text:      #16181b;   /* near-black headings */
-    --text-dim:  #3c4043;   /* dark grey body — AA on white */
-    --text-faint:#5f6368;   /* muted but still AA */
-    --accent:    #0e8f82;   /* teal */
-    --accent-2:  #2563eb;   /* blue */
-    --accent-ink:#0a6b61;
-    --accent-soft: #e3f3f1;
-    --blue-soft: #e8f0fe;
-    --warn:      #8a4b00;
-    --warn-soft: #fdf3da;
+    /* Warm "summer" light theme — cream/sand canvas, warm-teal + amber accents.
+       Tuned to feel as intentional/premium as dark mode (no cold blue-greys). */
+    --bg:        #f4ead6;   /* warm sand/cream canvas — inviting, summery */
+    --surface:   #fffaf0;   /* warm off-white cards, lighter than canvas so edges read */
+    --surface-2: #f8efdd;
+    --surface-3: #efe2c9;
+    --border:    #e7d8ba;   /* warm sand border */
+    --border-2:  #d8c39c;
+    --text:      #2a2114;   /* warm near-black headings (soft espresso, not pure grey) */
+    --text-dim:  #5a4c38;   /* warm brown body — AA on cream */
+    --text-faint:#857355;   /* muted warm taupe, still readable */
+    --accent:    #0f8479;   /* warm teal — primary (buttons, links, Kairos blocks) */
+    --accent-2:  #cf8a2c;   /* amber/gold — warm secondary, harmonizes with cream */
+    --accent-ink:#0b6259;   /* deep teal for text/links on soft surfaces */
+    --accent-soft: #dcebe6; /* soft warm-teal tint */
+    --blue-soft: #f7e6c4;   /* soft amber (var name kept; pairs with accent-soft) */
+    --warn:      #8a5200;   /* warm amber-brown */
+    --warn-soft: #fbeccb;
     --danger:    #b3261e;
-    --danger-soft: #fbe6e4;
+    --danger-soft: #f9e3dc;
     --radius:    16px;
     --radius-sm: 12px;
-    --shadow-sm: 0 1px 2px rgba(60,64,67,.10), 0 1px 3px rgba(60,64,67,.06);
-    --shadow:    0 1px 3px rgba(60,64,67,.12), 0 6px 18px rgba(60,64,67,.08);
-    --shadow-lg: 0 10px 34px rgba(60,64,67,.16);
+    --shadow-sm: 0 1px 2px rgba(96,72,32,.13), 0 2px 6px rgba(96,72,32,.10);
+    --shadow:    0 2px 6px rgba(96,72,32,.15), 0 8px 22px rgba(96,72,32,.10);
+    --shadow-lg: 0 10px 34px rgba(96,72,32,.18);
     --grad:      linear-gradient(120deg, var(--accent), var(--accent-2));
     --serif:     'Cinzel', 'Times New Roman', serif;
     --sans:      'Inter', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    --header-bg: rgba(246,248,252,0.82);
+    --header-bg: rgba(244,234,214,0.85);
     --toast-bg:  #202124;
     --toast-fg:  #ffffff;
     --blob-op:   0.30;
@@ -335,6 +337,17 @@
   .receipt .meta { color: var(--text-faint); font-size: 12.5px; margin-top: 2px; }
   .receipt .grow { flex: 1; min-width: 0; }
 
+  /* Group booked focus blocks under the goal they belong to */
+  .goal-group { margin-bottom: 14px; }
+  .goal-head { display: flex; align-items: center; gap: 10px; margin: 0 0 9px; flex-wrap: wrap; }
+  .goal-pill {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700;
+    color: var(--accent-ink); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    padding: 5px 13px; border-radius: 999px;
+  }
+  .goal-count { font-size: 12px; color: var(--text-faint); font-weight: 600; }
+
   .banner { border-radius: var(--radius-sm); padding: 13px 16px; font-size: 14px; display: flex; gap: 11px; align-items: flex-start; margin-bottom: 10px; }
   .banner.warn { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); color: var(--warn); }
   .banner.info { background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--accent-2) 35%, transparent); color: var(--text); }
@@ -373,6 +386,36 @@
   .ev.kairos .time { color: var(--accent-ink); }
   .ev.kairos .badge { background: var(--grad); color: #fff; }
   .ev.kairos .title::before { content: "✦ "; color: var(--accent); }
+  .ev .ev-goal { font-size: 12px; color: var(--accent-ink); font-weight: 600; margin-top: 3px; }
+  /* Chunked-subtask display: explicit part pill + de-emphasized continuation rows. */
+  .ev .ev-part {
+    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .3px;
+    color: var(--accent-ink); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    padding: 1px 9px; border-radius: 999px; margin-top: 5px;
+  }
+  .ev .ev-cont { font-size: 13px; color: var(--text-faint); font-style: italic; }
+  .ev.kairos.cont {
+    margin-top: -3px;                 /* pull continuation rows up so the set reads together */
+    background: var(--surface-2);     /* lighter than the full Part-1 block */
+    box-shadow: inset 4px 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .ev.kairos.cont .title::before { content: none; }
+  .ev-actions { display: flex; align-items: center; gap: 8px; }
+  .ev-dismiss {
+    border: 1px solid var(--border-2); background: var(--surface); color: var(--text-faint);
+    width: 26px; height: 26px; border-radius: 999px; cursor: pointer; font-size: 12px;
+    line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s, border-color .15s; flex: none;
+  }
+  .ev-dismiss:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+  .ev-dismiss:disabled { opacity: .5; cursor: default; }
+  /* In-flight delete: the button becomes a small circular spinner. */
+  .ev-dismiss.busy {
+    color: transparent; opacity: 1; cursor: default; background: var(--surface);
+    border-color: var(--border-2); border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+  }
 
   /* ============ Drafts (Lane B) ============ */
   .draft { background: var(--surface); border: 1px solid var(--border-2); border-radius: var(--radius-sm); padding: 18px 19px; margin-bottom: 13px; }
@@ -470,14 +513,22 @@
   .pagefoot { text-align: center; padding: 40px 16px 8px; color: var(--text-faint); font-size: 12.5px; }
 
   /* ============ Toast ============ */
+  /* Neutral, theme-native snackbar: uses surface/border tokens so it belongs in
+     both light and dark. Smooth fade + gentle lift in/out. */
   #toast {
-    position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(20px);
-    background: var(--toast-bg); color: var(--toast-fg);
-    padding: 13px 21px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow-lg);
-    opacity: 0; pointer-events: none; transition: all .25s ease; z-index: 50; max-width: 90vw;
+    position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(14px);
+    background: var(--surface); color: var(--text); border: 1px solid var(--border-2);
+    padding: 13px 21px; border-radius: 12px; font-size: 14px; font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease, transform .3s cubic-bezier(.2,.7,.3,1);
+    z-index: 50; max-width: 90vw;
   }
   #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-  #toast.err { background: #b3261e; color: #fff; }
+  #toast.err {
+    background: var(--danger-soft); color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  }
 
   @media (max-width: 720px) {
     .feature-grid, .steps { grid-template-columns: 1fr; }
@@ -485,7 +536,7 @@
     .field-row { grid-template-columns: 1fr; }
     .range-fields { margin-left: 0; width: 100%; }
     .ev { grid-template-columns: 74px 1fr; }
-    .ev .badge { grid-column: 2; justify-self: start; }
+    .ev .ev-actions { grid-column: 2; justify-self: start; }
     .nav .navlink { padding: 9px 10px; }
     .brand .name { font-size: 20px; }
   }
@@ -493,7 +544,7 @@
   @media (prefers-reduced-motion: reduce) {
     .blob { animation: none !important; }
     .spinner svg, .undo-status .mini-spin, .undo-status .ubar > i,
-    .dial-stage.active .node { animation: none !important; }
+    .dial-stage.active .node, .ev-dismiss.busy { animation: none !important; }
     .view { animation: none !important; }
     body { transition: none !important; }
   }
@@ -876,7 +927,8 @@ function toast(msg, isErr = false) {
   t.classList.toggle("err", isErr);
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 5200 : 3400);
+  // Hold ~2.8s for success (well-judged), longer for errors so they can be read.
+  toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 5000 : 2800);
 }
 
 // ---------- formatting ----------
@@ -1060,7 +1112,13 @@ async function runKairos() {
     await loadDrafts();
   } catch (e) {
     finishWorking();
-    renderError(e.message);
+    // Both Gemini models unreachable (502 from generate_with_fallback) — don't
+    // dead-end: offer a retry that re-runs the same goal + deadline.
+    if (e.status === 502 && /gemini/i.test(e.message || "")) {
+      renderRetry(goal, deadline);
+    } else {
+      renderError(e.message);
+    }
     resultsEl.hidden = false;
   } finally {
     runBtn.disabled = false;
@@ -1070,6 +1128,38 @@ runBtn.onclick = runKairos;
 goalEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runKairos(); });
 
 // ---------- render the agent's receipt ----------
+// Reduce a booked-block title to just the subtask, so it reads cleanly under the
+// goal header (server titles are "<subtask> (<2-word tag>)" — no "Focus:" prefix).
+function cleanBlockTitle(rawTitle, goal) {
+  let t = String(rawTitle || "Focus block").trim();
+  t = t.replace(/^\[[^\]]*\]\s*/, "").replace(/^focus(?:\s+block)?\b\s*[:\-–—]?\s*/i, "").trim();
+  const g = String(goal || "").trim().toLowerCase();
+  if (g) {
+    const lc = t.toLowerCase();
+    for (const suf of [` — ${g}`, ` - ${g}`, ` – ${g}`, ` (${g})`, ` [${g}]`]) {
+      if (lc.endsWith(suf)) { t = t.slice(0, t.length - suf.length).trim(); break; }
+    }
+  }
+  // Server appends a SHORT parenthetical goal tag "(...)" that may not equal the
+  // full goal; strip a trailing parenthetical so only the subtask remains.
+  t = t.replace(/\s*\([^()]*\)\s*$/, "").trim();
+  return t || "Focus block";
+}
+
+// Parse a trailing "(Part X of N)" / "(Part X/N)" / "(Part X)" chunk marker off a
+// cleaned block title. Returns { base, idx, total } or null. Display-only — the
+// underlying event/data is never modified.
+function parseChunk(title) {
+  const s = String(title || "");
+  const m = s.match(/\s*\(\s*part\s+(\d+)(?:\s*(?:of|\/)\s*(\d+))?\s*\)\s*$/i);
+  if (!m) return null;
+  return {
+    base: s.slice(0, m.index).trim() || s.trim(),
+    idx: parseInt(m[1], 10),
+    total: m[2] ? parseInt(m[2], 10) : null,
+  };
+}
+
 function receiptLine(rec) {
   const name = rec.name, r = rec.result || {}, a = rec.args || {};
   if (name === "create_calendar_event") {
@@ -1111,14 +1201,44 @@ function renderResult(result) {
     if (n.message) html += `<div class="banner ${cls}"><span>${ic}</span><div>${esc(n.message)}</div></div>`;
   });
 
-  if (actions.length) {
+  const createActions = actions.filter((a) => a.name === "create_calendar_event");
+  const otherActions = actions.filter((a) => a.name !== "create_calendar_event");
+
+  // Booked focus blocks: grouped under the goal they belong to.
+  if (createActions.length) {
+    const groups = new Map();
+    createActions.forEach((rec) => {
+      const r = rec.result || {}, a = rec.args || {};
+      const goal = r.goal || result.goal || "";
+      const key = goal || "Focus blocks";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({
+        subtask: cleanBlockTitle(r.title || a.title, goal),
+        meta: fmtRange(r.start || a.start, r.end || a.end) + (r.adjusted ? " · adjusted to working hours" : ""),
+      });
+    });
+    groups.forEach((items, goalName) => {
+      html += `<div class="goal-group">
+        <div class="goal-head"><span class="goal-pill">🎯 ${esc(goalName)}</span><span class="goal-count">${items.length} focus block${items.length === 1 ? "" : "s"}</span></div>
+        <div class="receipts">`;
+      items.forEach((it) => {
+        html += `<div class="receipt"><span class="ico">📅</span><div class="grow"><div>Booked “${esc(it.subtask)}”</div><div class="meta">${it.meta}</div></div></div>`;
+      });
+      html += `</div></div>`;
+    });
+  }
+
+  // Everything else (task breakdown, reprioritize, …) as before.
+  if (otherActions.length) {
     html += `<div class="receipts">`;
-    actions.forEach((rec) => {
+    otherActions.forEach((rec) => {
       const r = receiptLine(rec);
       html += `<div class="receipt"><span class="ico">${r.ico}</span><div class="grow"><div>${r.main}</div>${r.meta ? `<div class="meta">${r.meta}</div>` : ""}</div></div>`;
     });
     html += `</div>`;
-  } else if (!summary) {
+  }
+
+  if (!actions.length && !summary) {
     html += `<div class="empty">Kairos reviewed your schedule and didn't need to make changes.</div>`;
   }
 
@@ -1135,6 +1255,26 @@ function renderError(msg) {
   el("range-bar").hidden = true;
   el("timeline-card").hidden = true;
   el("drafts-card").hidden = true;
+}
+
+// Total-AI-failure state (both Gemini models unreachable): a clear, retryable
+// message instead of a raw error or blank view. Retry re-runs the same inputs.
+function renderRetry(goal, deadline) {
+  const card = el("receipt-card");
+  card.innerHTML =
+    `<p class="section-title">What Kairos did</p>
+     <div class="banner warn"><span>⚠️</span><div>Kairos couldn't reach the AI just now. This is usually temporary — give it another go.</div></div>
+     <button class="btn" id="retry-run">Try again</button>`;
+  card.hidden = false;
+  el("range-bar").hidden = true;
+  el("timeline-card").hidden = true;
+  el("drafts-card").hidden = true;
+  el("retry-run").onclick = () => {
+    // Restore the exact goal + deadline and re-run.
+    goalEl.value = goal;
+    deadlineEl.value = deadline || "";
+    runKairos();
+  };
 }
 
 // ---------- timeline ----------
@@ -1176,6 +1316,16 @@ async function loadTimeline(runResult) {
       card.innerHTML = html; card.hidden = false; resultsEl.hidden = false; return;
     }
 
+    // Pre-pass: for each chunked subtask, work out how many parts exist (N) so we
+    // can show an explicit "Part X of N" even when titles only say "(Part X)".
+    const chunkTotals = {};
+    events.forEach((ev) => {
+      if (!ev.kairos) return;
+      const c = parseChunk(ev.goal ? cleanBlockTitle(ev.summary, ev.goal) : ev.summary);
+      if (!c) return;
+      chunkTotals[c.base] = Math.max(chunkTotals[c.base] || 0, c.total || 0, c.idx);
+    });
+
     // group by local day
     const groups = {};
     events.forEach((ev) => {
@@ -1189,11 +1339,39 @@ async function loadTimeline(runResult) {
         const kairos = !!ev.kairos;
         const time = ev.all_day ? "All day"
           : `${fmtTime(new Date(ev.start))}<br>${fmtTime(new Date(ev.end))}`;
+        let titleText = ev.summary || "(untitled)";
+        let goalLabel = "";
+        if (kairos && ev.goal) {
+          titleText = cleanBlockTitle(ev.summary, ev.goal);
+          goalLabel = `<div class="ev-goal">🎯 ${esc(ev.goal)}</div>`;
+        }
+
+        // Chunked subtask ("Part X of N"): show the full title + goal on Part 1,
+        // and a lighter "…continued · Part X of N" on the rest so a split subtask
+        // reads as one set, not many duplicate rows.
+        const chunk = kairos ? parseChunk(titleText) : null;
+        const n = chunk ? (chunkTotals[chunk.base] || chunk.total || chunk.idx) : 0;
+        let titleCell, contClass = "";
+        if (chunk && n > 1 && chunk.idx > 1) {
+          contClass = " cont";
+          titleCell = `<div class="ev-cont">…continued · Part ${chunk.idx} of ${n}</div>`;
+        } else if (chunk && n > 1) {
+          titleCell = `<div class="title">${esc(chunk.base)}</div>
+            <span class="ev-part">Part ${chunk.idx} of ${n}</span>${goalLabel}`;
+        } else {
+          // Not a multi-part block (or a stray lone "(Part 1)") — show plainly.
+          titleCell = `<div class="title">${esc(chunk ? chunk.base : titleText)}</div>${goalLabel}`;
+        }
+
+        const actions = kairos
+          ? `<span class="badge">KAIROS</span>
+             <button class="ev-dismiss" data-dismiss="${esc(ev.id)}" title="Remove this focus block" aria-label="Dismiss this Kairos block">✕</button>`
+          : `<span class="badge">Your event</span>`;
         html += `
-          <div class="ev ${kairos ? "kairos" : "user"}">
+          <div class="ev ${kairos ? "kairos" : "user"}${contClass}" data-id="${esc(ev.id)}">
             <div class="time">${time}</div>
-            <div class="title">${esc(ev.summary || "(untitled)")}</div>
-            <div class="badge">${kairos ? "KAIROS" : "Your event"}</div>
+            <div>${titleCell}</div>
+            <div class="ev-actions">${actions}</div>
           </div>`;
       });
       html += `</div>`;
@@ -1399,6 +1577,30 @@ el("undo-all").onclick = async () => {
     btn.disabled = false;
   }
 };
+
+// ---------- dismiss a single Kairos block (targeted, marked-only delete) ----------
+// Delegated: the timeline card's innerHTML is rebuilt on each load. The backend
+// (/agent/undo-event/{id}) re-verifies the clutch marker, so a user's own event
+// can never be removed here.
+el("timeline-card").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".ev-dismiss");
+  if (!btn) return;
+  const id = btn.getAttribute("data-dismiss");
+  if (!id) return;
+  if (!confirm("Remove this Kairos focus block from your calendar? Your own events are never touched.")) return;
+  // Inline circular progress on the button itself; disabled to block double-clicks.
+  btn.disabled = true;
+  btn.classList.add("busy");
+  try {
+    const r = await api(`/agent/undo-event/${encodeURIComponent(id)}`, { method: "POST" });
+    toast(r.already_gone ? "Block already removed" : "Block removed");
+    await loadTimeline(); // rebuilds the list, dropping this block + its button
+  } catch (err) {
+    btn.classList.remove("busy");
+    btn.disabled = false;
+    toast(err.message, true);
+  }
+});
 
 // ---------- boot ----------
 applyTheme(resolveTheme(), false); // sync toggle icon to the pre-painted theme (no cookie write)

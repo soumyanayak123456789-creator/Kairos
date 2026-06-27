@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -138,11 +139,14 @@ GEMINI_TIMEOUT_MS = 30_000          # per-call timeout; a timeout triggers fallb
 # Vertex region. Default "global" for broadest model availability + lower error
 # rates; override via env (e.g. VERTEX_LOCATION=asia-south1) once confirmed.
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global")
-# A multi-block plan costs ~2 calls/subtask (create_calendar_event + upsert_task),
-# often one call per turn — 8 turns couldn't finish. AGENT_MAX_ACTIONS is the real
-# runaway guard; the step cap just bounds turns/loops.
-AGENT_STEP_CAP = 16                 # max Gemini turns per run; never loop forever
-AGENT_MAX_ACTIONS = 10              # hard cap on total executed writes per run
+# A granular plan costs many writes: break_down_task (~1) + ~2 calls/subtask
+# (create_calendar_event + upsert_task), often one call per turn. A 12h goal
+# (~7 subtasks + ~6 blocks) needs ~15+ actions, so the budget must comfortably
+# exceed that or booking gets starved by decomposition. MAX_EVENTS_PER_RUN (the
+# ≤8 booked-events safety cap) stays the real runaway guard; the action budget and
+# step cap just need to be wide enough to let a feasible plan finish in one run.
+AGENT_STEP_CAP = 24                 # max Gemini turns per run; never loop forever
+AGENT_MAX_ACTIONS = 20              # hard cap on total executed writes per run
 MAX_EVENTS_PER_RUN = 8             # hard cap on create_calendar_event per run; HALTS the run
 
 # Lane A (design.md §3): reversible actions on the user's OWN surface — executed
@@ -594,9 +598,18 @@ def ui_timeline(
         time_max = (now_local + timedelta(hours=hours)).isoformat()
 
     events = _list_events(session, time_min, time_max)
-    kairos_ids = {e.get("id") for e in _list_clutch_events(session, time_min, time_max)}
+    # Map each clutch block -> its parent goal (from extendedProperties) so the UI
+    # can label/group blocks by goal. UI-only; the agent's snapshot is unaffected.
+    clutch = _list_clutch_events(session, time_min, time_max)
+    kairos_ids = {e.get("id") for e in clutch}
+    goal_by_id = {
+        e.get("id"): (e.get("extendedProperties", {}).get("private", {}) or {}).get("clutch_goal")
+        for e in clutch
+    }
     for ev in events:
         ev["kairos"] = ev.get("id") in kairos_ids
+        if ev["kairos"] and goal_by_id.get(ev.get("id")):
+            ev["goal"] = goal_by_id[ev["id"]]
 
     return {
         "now": now_local.isoformat(),
@@ -746,20 +759,36 @@ SYSTEM_PROMPT = (
     "reversible, so act decisively but do not double-book. Respect the scheduling "
     "policy in the prompt: keep focus blocks inside working hours and within the "
     "max block length, splitting longer work across multiple days.\n"
-    "Schedule by EFFORT: book roughly the minutes each subtask needs and no more. "
-    "A subtask whose effort fits one block gets exactly ONE block; only split a "
-    "subtask into multiple blocks if its effort exceeds the max block length "
-    "(e.g. 300 min over a 120-min cap => 2-3 blocks). The total time you book "
-    "should approximate the SUM of subtask efforts — never schedule the same "
-    "subtask repeatedly or create near-duplicate blocks to fill time. Prefer few, "
-    "well-placed blocks; you may issue several function calls in one step.\n"
-    "FEASIBILITY CHECK: if the remaining work genuinely does NOT fit in the free "
-    "time before the deadline (even after rescheduling), do two things: (a) call "
-    "notify_user with a high-urgency warning, and (b) call draft_message to draft a "
-    "short rescue/heads-up message (an extension request or a 'running behind' "
-    "note) — pass the goal and the SPECIFIC unmet portion (e.g. 'the final "
-    "formatting pass won't be done by Friday 6pm'). This draft is only PROPOSED for "
-    "the user's review; it is never sent. Do not draft a message when the work fits.\n"
+    "Decompose FIRST, then schedule. Always call break_down_task to split the goal "
+    "into several GRANULAR, DISTINCT, differently-named subtasks (for a research "
+    "report, that is: background research, source gathering, outline, draft "
+    "introduction, draft each body section, draft conclusion, revise/edit, format & "
+    "citations — NOT one giant 'draft the main body'). Book exactly ONE focus block "
+    "per distinct subtask, and title that block after the subtask it implements.\n"
+    "Schedule by EFFORT and COVER THE WHOLE WORKLOAD: book blocks until the ENTIRE "
+    "estimated effort (the SUM of the subtask efforts) is scheduled in the user's "
+    "free time before the deadline. When there is enough free time before the "
+    "deadline, you MUST schedule all of it — do NOT stop after one or two blocks "
+    "while free time remains. A 12-hour goal spread over several free days should "
+    "become roughly 6 or more distinct blocks across those days, not a single "
+    "block. PREFER more distinct subtasks over splitting one big subtask: if a "
+    "piece of work is large, break it into several differently-named subtasks "
+    "(e.g. 'Draft Section 1', 'Draft Section 2') instead of booking the same title "
+    "as '(Part 1)', '(Part 2)', '(Part 3)'. Only split a SINGLE indivisible subtask "
+    "into multiple blocks when its own effort truly exceeds the max block length, "
+    "and spread those across different days. NEVER repeat the same subtask title or "
+    "create near-duplicate blocks to pad time. You may issue several function calls "
+    "in one step.\n"
+    "FEASIBILITY CHECK: only fall back to a rescue message when the work GENUINELY "
+    "cannot fit — i.e. you have already scheduled into all the usable free time "
+    "before the deadline and estimated effort STILL remains unscheduled. In that "
+    "case do two things: (a) call notify_user with a high-urgency warning, and "
+    "(b) call draft_message to draft a short rescue/heads-up message (an extension "
+    "request or a 'running behind' note) — pass the goal and the SPECIFIC unmet "
+    "portion (e.g. 'the final formatting pass won't be done by Friday 6pm'). This "
+    "draft is only PROPOSED for the user's review; it is never sent. If the full "
+    "effort DOES fit before the deadline, schedule ALL of it and do NOT draft a "
+    "message — choosing to book less is not a reason to draft one.\n"
     "When done, stop calling functions and reply with a one-paragraph receipt."
 )
 
@@ -894,15 +923,103 @@ def _event_time(dt_str: str) -> dict:
     return {"dateTime": dt_str}
 
 
-def _cal_create(session, title, start, end, description=None) -> dict:
+# Filler/stop words and common leading action verbs dropped when deriving the
+# short goal tag — the noun phrase that follows is what makes a useful label.
+_GOAL_STOPWORDS = {
+    # articles / prepositions / conjunctions / determiners
+    "a", "an", "the", "to", "for", "of", "and", "or", "my", "your", "our", "this",
+    "that", "in", "on", "at", "with", "by", "before", "due", "until", "into", "from",
+    "which", "while", "as", "so", "but", "about", "around", "roughly", "approximately",
+    # pronouns / modals / intent fillers ("i need to finish a …", "i want to …")
+    "i", "me", "we", "us", "you", "mine", "ours", "yours", "it",
+    "need", "needs", "needed", "want", "wants", "wanted", "have", "has", "had",
+    "will", "would", "shall", "should", "can", "could", "must", "may", "might",
+    "like", "going", "gonna", "gotta", "just", "really", "very", "am", "is", "are",
+    "take", "takes", "taking", "took", "spend", "spent",
+    # time units (don't let "12 hours" leak into the tag)
+    "hour", "hours", "hr", "hrs", "minute", "minutes", "min", "mins", "second",
+    "seconds", "day", "days", "week", "weeks", "month", "months", "time",
+    # common leading action verbs — the noun phrase that follows is the useful label
+    "write", "writing", "finish", "finishing", "complete", "completing", "do",
+    "doing", "make", "making", "prepare", "preparing", "study", "studying", "build",
+    "building", "create", "creating", "submit", "submitting", "send", "sending",
+    "plan", "planning", "get", "getting", "review", "reviewing", "read", "reading",
+    "draft", "drafting", "pass", "passing", "work", "working", "start", "starting",
+}
+
+
+def _short_goal(goal: str | None) -> str:
+    """Condense a goal into a ~2-word tag from its first meaningful keywords.
+
+    DISPLAY/LABELING ONLY. Skips filler/stop words, leading action verbs, and
+    deadline clauses, then Title-Cases the first ~2 keywords.
+    "write a research report by Friday" -> "Research Report".
+    """
+    g = (goal or "").strip()
+    if not g:
+        return ""
+    # Cut deadline tails ("by Friday", "before…") and clause boundaries first.
+    g = re.split(r"\s+(?:by|before|due|until|on)\s+", g, maxsplit=1, flags=re.IGNORECASE)[0]
+    g = re.split(r"[—–\-:,.;]", g, maxsplit=1)[0].strip()
+    raw = re.findall(r"[A-Za-z0-9']+", g)
+    # Skip stop words and pure-number tokens ("12") so only real keywords remain.
+    keywords = [w for w in raw if w.lower() not in _GOAL_STOPWORDS and not w.isdigit()]
+    chosen = (keywords or raw)[:2]
+    if not chosen:
+        return ""
+    return " ".join(w[:1].upper() + w[1:] for w in chosen)
+
+
+def _format_block_title(raw_title: str, goal: str | None) -> str:
+    """Calendar event title: '<subtask> (<2-word short tag>)'. No 'Focus:' prefix.
+
+    DISPLAY/LABELING ONLY — does not affect scheduling, subtask breakdown, or the
+    runaway cap. We normalize whatever title the model proposed (stripping any
+    "Focus"/"Focus block" prefix, a bracketed goal, and any goal it already
+    appended), then attach the SHORT 2-word goal tag from _short_goal(). The FULL
+    goal sentence is never written to the title — only the 2-word tag. With no
+    goal, the title is just the subtask.
+    e.g. subtask "Draft Main Body Content and Analysis" + goal "i need to finish a
+    research report which will take me 12 hours" -> "Draft Main Body Content and
+    Analysis (Research Report)".
+    """
+    title = (raw_title or "Focus block").strip()
+    g = _short_goal(goal)
+
+    # Drop a leading "[Goal] " bracket the model may have added.
+    title = re.sub(r"^\[[^\]]*\]\s*", "", title).strip()
+    # Drop a leading "Focus" / "Focus block" / "Focus:" prefix to isolate the subtask.
+    subtask = re.sub(r"(?i)^focus(?:\s+block)?\b\s*[:\-–—]?\s*", "", title).strip()
+    if not subtask:
+        subtask = "Work block"
+
+    # If the model already appended the goal (short tag OR full sentence), strip it
+    # so we don't double-label.
+    full = (goal or "").strip()
+    for suffix in (f" — {full}", f" - {full}", f" – {full}", f" ({full})", f" [{full}]",
+                   f" — {g}", f" - {g}", f" – {g}", f" ({g})", f" [{g}]"):
+        if suffix.strip(" —–-([") and subtask.lower().endswith(suffix.lower()):
+            subtask = subtask[: -len(suffix)].strip()
+            break
+
+    if not g:
+        return subtask
+    return f"{subtask} ({g})"
+
+
+def _cal_create(session, title, start, end, description=None, goal=None) -> dict:
     note = "🤖 Created by Clutch (agent focus block)."
+    private = {CLUTCH_MARKER: "1", "clutch_action": "focus_block"}
+    if goal:
+        # Stored for the UI (timeline grouping/labeling). Not read by the agent.
+        private["clutch_goal"] = goal[:300]
     body = {
         "summary": title,
         "start": _event_time(start),
         "end": _event_time(end),
         "description": f"{description}\n\n{note}" if description else note,
         # Tag so undo/UI can tell agent events from the user's own.
-        "extendedProperties": {"private": {CLUTCH_MARKER: "1", "clutch_action": "focus_block"}},
+        "extendedProperties": {"private": private},
     }
     resp = session.post(f"{CALENDAR_BASE}/calendars/primary/events", json=body)
     if resp.status_code not in (200, 201):
@@ -1004,9 +1121,19 @@ def decompose_goal(client, goal, now: datetime, deadline_dt: datetime | None) ->
     deadline_str = deadline_dt.isoformat() if deadline_dt else "unspecified"
     prompt = (
         f"The current date and time is {now.isoformat()}.\n"
-        "Break this goal into 2-6 concrete, time-estimated subtasks. Return a JSON "
-        "array of objects with keys: title (string), effort (integer minutes), "
-        "due (ISO 8601 datetime string).\n"
+        "Break this goal into concrete, time-estimated subtasks (typically 4-8; use "
+        "fewer only for a genuinely small goal). Make the subtasks VARIED and "
+        "granular: each one should be a DISTINCT phase or deliverable that moves the "
+        "goal forward, covering it end-to-end. For example, a research report would "
+        "decompose into steps like background research, outline, draft introduction, "
+        "draft each major body section, draft conclusion, revise/edit, and "
+        "format/citations — NOT one giant 'draft everything' step. Do NOT collapse "
+        "the bulk of the work into a single dominant subtask that would just be "
+        "repeated; split large work into separate, differently-named steps instead. "
+        "Keep each subtask reasonably sized (roughly 30-120 minutes of effort) so it "
+        "schedules cleanly while letting longer steps be chunked when needed. Return "
+        "a JSON array of objects with keys: title (string), effort (integer "
+        "minutes), due (ISO 8601 datetime string).\n"
         f"Every `due` MUST be strictly after {now.isoformat()} and on or before "
         f"the deadline {deadline_str}. Do NOT use any date from your training data "
         "or any date in the past — compute dates relative to the current date above.\n"
@@ -1167,20 +1294,24 @@ def enforce_working_hours(start_iso: str, end_iso: str, prefs: dict) -> tuple[st
     return new_s.isoformat(), new_e.isoformat(), note
 
 
-def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=None) -> tuple[dict, dict]:
+def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=None, run_goal=None) -> tuple[dict, dict]:
     """Execute one Lane A tool + write an action_log entry. Returns (result, record)."""
     tasks_coll = db().collection(USERS).document(sub).collection(TASKS)
 
     if name == "create_calendar_event":
         # Deterministically enforce working hours + max block length.
         start, end, adjusted = enforce_working_hours(args["start"], args["end"], prefs)
+        # Uniform title that names the parent goal (display/labeling only).
+        block_goal = args.get("goal") or run_goal
+        title = _format_block_title(args.get("title", "Focus block"), block_goal)
         ev = _cal_create(
-            session, args.get("title", "Focus block"), start, end, args.get("description"),
+            session, title, start, end, args.get("description"), goal=block_goal,
         )
         result = {
             "event_id": ev.get("id"),
             "htmlLink": ev.get("htmlLink"),
-            "title": args.get("title", "Focus block"),
+            "title": title,
+            "goal": block_goal,
             "start": start,
             "end": end,
             "adjusted": adjusted,
@@ -1308,10 +1439,17 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
         f"Scheduling policy (ENFORCED server-side): only book focus blocks between "
         f"{prefs['work_start_hour']:02d}:00 and {prefs['work_end_hour']:02d}:00 "
         f"{prefs['work_tz']}; max {prefs['max_block_minutes']} min per block; at most "
-        f"{MAX_EVENTS_PER_RUN} events total this run (the run HALTS past that). Book "
-        f"time proportional to each subtask's effort — one block per subtask unless "
-        f"its effort exceeds the block cap. Split longer work across different days. "
-        f"Blocks outside this are rejected/clamped, so propose compliant times."
+        f"{MAX_EVENTS_PER_RUN} events total this run (the run HALTS past that). Break "
+        f"the goal into several DISTINCT, granular subtasks and book ONE block per "
+        f"subtask, titled after it. Schedule the FULL estimated effort across the "
+        f"available free days when it fits before the deadline — do not stop after a "
+        f"single block while free time remains. Prefer creating more distinct "
+        f"subtasks over repeating one subtask as '(Part 1)'…'(Part N)'; split a "
+        f"single subtask across blocks only if its own effort exceeds the "
+        f"{prefs['max_block_minutes']}-min cap, spreading those across different days. "
+        f"Only when all usable free time before the deadline is booked and work still "
+        f"remains is the goal infeasible. Blocks outside working hours are "
+        f"rejected/clamped, so propose compliant times."
     )
     user_prompt = (
         f"Goal: {goal or '(no specific goal — review my schedule and improve it)'}\n"
@@ -1368,7 +1506,8 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
                 else:
                     try:
                         result, record = execute_lane_a(
-                            sub, data, session, client, name, args, prefs, run_deadline=deadline
+                            sub, data, session, client, name, args, prefs,
+                            run_deadline=deadline, run_goal=goal,
                         )
                         executed_actions.append(record)
                         events_created += 1  # count only events that were actually created
@@ -1385,7 +1524,8 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
                 else:
                     try:
                         result, record = execute_lane_a(
-                            sub, data, session, client, name, args, prefs, run_deadline=deadline
+                            sub, data, session, client, name, args, prefs,
+                            run_deadline=deadline, run_goal=goal,
                         )
                         executed_actions.append(record)
                         payload = {"status": "executed", **result}
@@ -1707,6 +1847,48 @@ def agent_undo_all(request: Request):
         "reschedules_reverted": reschedules_reverted,
         "actions_marked_undone": actions_marked,
     }
+
+
+@app.post("/agent/undo-event/{event_id}")
+def agent_undo_event(event_id: str, request: Request):
+    """Targeted delete of ONE Clutch focus block by event id.
+
+    SAFETY: reuses the exact marked-only guarantee as undo-all — we fetch the
+    event and verify it carries the clutch marker before deleting. A user's own
+    (unmarked) event is NEVER deleted; we 403 instead. Idempotent on already-gone.
+    Also marks any matching action_log delete_event record undone so the receipt
+    stays consistent. Does NOT touch scheduling/planning.
+    """
+    sub, data = _require_user(request)
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+
+    try:
+        ev = _cal_get(session, event_id)
+    except HTTPException as e:
+        if e.status_code == 502 and "404" in str(e.detail):
+            return {"deleted": False, "already_gone": True, "event_id": event_id}
+        raise
+
+    private = (ev.get("extendedProperties", {}) or {}).get("private", {}) or {}
+    if private.get(CLUTCH_MARKER) != "1":
+        # Refuse to delete the user's own real event — same boundary as undo-all.
+        raise HTTPException(status_code=403, detail="Not a Kairos block — refusing to delete.")
+
+    _cal_delete(session, event_id)
+
+    # Keep the action log consistent: mark the matching create as undone.
+    actions_marked = 0
+    for d in db().collection(USERS).document(sub).collection(ACTION_LOG).stream():
+        rec = d.to_dict()
+        if rec.get("undone"):
+            continue
+        undo = rec.get("undo") or {}
+        if undo.get("type") == "delete_event" and undo.get("event_id") == event_id:
+            d.reference.set({"undone": True, "undone_at": firestore.SERVER_TIMESTAMP}, merge=True)
+            actions_marked += 1
+
+    return {"deleted": True, "event_id": event_id, "actions_marked_undone": actions_marked}
 
 
 # --- Lane B drafts: list / confirm / edit / dismiss (confirm-first, no send) --
