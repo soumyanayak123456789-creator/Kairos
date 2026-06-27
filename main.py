@@ -426,10 +426,15 @@ def oauth2callback(request: Request):
     # One-time-use verifier from Firestore (deleted on read).
     code_verifier = pop_verifier(state) if state else None
     if not state or not code_verifier:
-        raise HTTPException(
-            status_code=400,
-            detail="OAuth state unrecognized or expired. Start again at /login.",
-        )
+        # Stale/replayed callback — e.g. the user pressed browser Back to Google's
+        # consent page (still in history from the login round-trip) and clicked
+        # Continue, but the one-time state was already consumed. Don't surface raw
+        # JSON: send an already-signed-in user back into the app, otherwise restart
+        # the login cleanly.
+        existing = request.cookies.get(UID_COOKIE)
+        if existing and load_user(existing):
+            return RedirectResponse("/")
+        return RedirectResponse("/login")
 
     flow = _build_flow(state=state)
     flow.code_verifier = code_verifier
