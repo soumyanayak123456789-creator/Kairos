@@ -49,6 +49,8 @@ import logging
 import os
 import pathlib
 import re
+
+import requests
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -139,6 +141,13 @@ GEMINI_TIMEOUT_MS = 30_000          # per-call timeout; a timeout triggers fallb
 # Vertex region. Default "global" for broadest model availability + lower error
 # rates; override via env (e.g. VERTEX_LOCATION=asia-south1) once confirmed.
 VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global")
+
+# Google Maps Routes API key for the commute-time feature (additive; optional).
+# SECRET — read from the environment only, NEVER hardcoded, NEVER logged, NEVER
+# returned to the browser. If unset, the commute feature degrades to a no-op and
+# the rest of the app is unaffected.
+MAPS_API_KEY = os.environ.get("MAPS_API_KEY")
+ROUTES_ENDPOINT = "https://routes.googleapis.com/directions/v2:computeRoutes"
 # A granular plan costs many writes: break_down_task (~1) + ~2 calls/subtask
 # (create_calendar_event + upsert_task), often one call per turn. A 12h goal
 # (~7 subtasks + ~6 blocks) needs ~15+ actions, so the budget must comfortably
@@ -315,7 +324,9 @@ def _ensure_valid(sub: str, creds: Credentials) -> Credentials:
     return creds
 
 
-def _list_events(session: AuthorizedSession, time_min: str, time_max: str) -> list[dict]:
+def _list_events(
+    session: AuthorizedSession, time_min: str, time_max: str, include_location: bool = False
+) -> list[dict]:
     resp = session.get(
         f"{CALENDAR_BASE}/calendars/primary/events",
         params={
@@ -333,17 +344,23 @@ def _list_events(session: AuthorizedSession, time_min: str, time_max: str) -> li
     out = []
     for e in resp.json().get("items", []):
         start, end = e.get("start", {}), e.get("end", {})
-        out.append(
-            {
-                "id": e.get("id"),
-                "summary": e.get("summary", "(no title)"),
-                # dateTime for timed events, date for all-day events.
-                "start": start.get("dateTime") or start.get("date"),
-                "end": end.get("dateTime") or end.get("date"),
-                "all_day": "date" in start,
-                "status": e.get("status"),
-            }
-        )
+        item = {
+            "id": e.get("id"),
+            "summary": e.get("summary", "(no title)"),
+            # dateTime for timed events, date for all-day events.
+            "start": start.get("dateTime") or start.get("date"),
+            "end": end.get("dateTime") or end.get("date"),
+            "all_day": "date" in start,
+            "status": e.get("status"),
+        }
+        # Location is carried ONLY for UI timelines (include_location=True); the
+        # agent's perception snapshot uses the default and is unchanged.
+        if include_location and e.get("location"):
+            item["location"] = e["location"]
+            geo = e.get("geo")
+            if geo:
+                item["geo"] = geo
+        out.append(item)
     return out
 
 
@@ -597,7 +614,7 @@ def ui_timeline(
         time_min = win_start.isoformat()
         time_max = (now_local + timedelta(hours=hours)).isoformat()
 
-    events = _list_events(session, time_min, time_max)
+    events = _list_events(session, time_min, time_max, include_location=True)
     # Map each clutch block -> its parent goal (from extendedProperties) so the UI
     # can label/group blocks by goal. UI-only; the agent's snapshot is unaffected.
     clutch = _list_clutch_events(session, time_min, time_max)
@@ -1705,6 +1722,24 @@ _DEMO_WEEK = {
     6: [("Group Project Sync", 16, 0, 17, 0)],
 }
 
+# Real-coordinate locations (Bhubaneswar) for demo seed events so the commute
+# feature has something to route to. Focus blocks (created by the agent) get NO
+# location. Coords are real places so the Routes API returns sane minute-level times.
+_DEMO_LOCATIONS = {
+    "Data Structures Lecture":   {"address": "KIIT University, Campus 7, Bhubaneswar", "lat": 20.3539, "lng": 85.8198},
+    "Operating Systems Lecture": {"address": "KIIT University, Campus 7, Bhubaneswar", "lat": 20.3539, "lng": 85.8198},
+    "Physics Lab":               {"address": "KIIT Science Block, Bhubaneswar",        "lat": 20.3551, "lng": 85.8175},
+    "Linear Algebra Tutorial":   {"address": "KIIT Central Library, Bhubaneswar",      "lat": 20.3525, "lng": 85.8157},
+    "Career Workshop":           {"address": "City Centre, Master Canteen, Bhubaneswar", "lat": 20.2724, "lng": 85.8425},
+    "Football Practice":         {"address": "Kalinga Stadium, Bhubaneswar",           "lat": 20.2896, "lng": 85.8203},
+    "Group Project Sync":        {"address": "State Library, Bhubaneswar",             "lat": 20.2762, "lng": 85.8389},
+}
+
+# Fixed demo "home" origin in Bhubaneswar. In demo mode the commute is computed
+# from THIS point (not the viewer's real GPS) so travel times are realistic and
+# consistent regardless of where the judge actually is.
+_DEMO_ORIGIN = {"address": "Jaydev Vihar (home), Bhubaneswar", "lat": 20.2961, "lng": 85.8245}
+
 
 def _demo_seed_events(now_local: datetime, tz: ZoneInfo) -> list[dict]:
     """Google-Calendar-shaped seed events for the next 7 days (fixed weekly pattern)."""
@@ -1717,13 +1752,18 @@ def _demo_seed_events(now_local: datetime, tz: ZoneInfo) -> list[dict]:
             s = datetime(day.year, day.month, day.day, sh, sm, tzinfo=tz)
             e = datetime(day.year, day.month, day.day, eh, em, tzinfo=tz)
             n += 1
-            events.append({
+            ev = {
                 "id": f"seed-{n}",
                 "summary": summary,
                 "start": {"dateTime": s.isoformat()},
                 "end": {"dateTime": e.isoformat()},
                 "status": "confirmed",
-            })
+            }
+            loc = _DEMO_LOCATIONS.get(summary)
+            if loc:
+                ev["location"] = loc["address"]
+                ev["geo"] = {"lat": loc["lat"], "lng": loc["lng"]}
+            events.append(ev)
     return events
 
 
@@ -2039,7 +2079,8 @@ def run_agent_demo(goal: str | None, deadline: str | None, hours: int) -> dict:
         final_text = f"Step cap ({AGENT_STEP_CAP}) reached before the model finished."
 
     # Build a UI timeline: seed (user) events + booked (Kairos) blocks, flagged.
-    final_events = _list_events(session, tmin, tmax)
+    # include_location carries seed addresses/coords through for the commute feature.
+    final_events = _list_events(session, tmin, tmax, include_location=True)
     goal_by_id, clutch_ids = {}, set()
     for ev in session.events:
         priv = (ev.get("extendedProperties", {}) or {}).get("private", {}) or {}
@@ -2073,6 +2114,7 @@ def run_agent_demo(goal: str | None, deadline: str | None, hours: int) -> dict:
         "notifications": notifications,
         "final_text": final_text,
         "timeline": timeline,
+        "origin": _DEMO_ORIGIN,   # fixed Bhubaneswar origin for commute calc
     }
 
 
@@ -2091,6 +2133,104 @@ def agent_demo_run(body: DemoRunRequest):
     if body.hours < 1 or body.hours > 24 * 30:
         raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
     return run_agent_demo(body.goal, body.deadline, body.hours)
+
+
+@app.get("/agent/demo/seed")
+def agent_demo_seed():
+    """Return the seeded demo week WITHOUT running the agent, so the UI can show a
+    populated sample calendar the instant a judge enters demo mode (then a run
+    ADDS Kairos blocks to it). Read-only; no Gemini, no writes, no OAuth."""
+    tz = ZoneInfo(WORK_TZ)
+    now_local = datetime.now(tz)
+    session = DemoSession(_demo_seed_events(now_local, tz))
+    tmin = datetime.now(timezone.utc).isoformat()
+    tmax = (datetime.now(timezone.utc) + timedelta(hours=24 * 7)).isoformat()
+    events = _list_events(session, tmin, tmax, include_location=True)
+    for ev in events:
+        ev["kairos"] = False
+    return {
+        "demo": True,
+        "now": now_local.isoformat(),
+        "timezone": str(tz),
+        "origin": _DEMO_ORIGIN,   # fixed Bhubaneswar origin for commute calc
+        "timeline": events,
+    }
+
+
+# --- Commute time (Google Maps Routes API; additive, optional) ----------------
+
+
+def _fmt_commute(minutes: int) -> str:
+    """Human-friendly travel-time label; switches to hours past 60 min."""
+    if minutes < 60:
+        return f"{minutes} min"
+    h, m = divmod(minutes, 60)
+    return f"{h} hr" + (f" {m} min" if m else "")
+
+
+class CommuteRequest(BaseModel):
+    origin_lat: float
+    origin_lng: float
+    dest_lat: float | None = None
+    dest_lng: float | None = None
+    dest_address: str | None = None
+
+
+@app.post("/commute")
+def commute(body: CommuteRequest):
+    """Drive time from the user's CURRENT location to an event location, via the
+    Google Routes API.
+
+    The MAPS_API_KEY is read from the environment, sent only in the server->Google
+    request header, and is NEVER returned to the client or logged. Degrades to
+    {"available": false} on ANY problem (missing key, no destination, API error)
+    so the UI simply omits the commute time and never shows an error."""
+    if not MAPS_API_KEY:
+        return {"available": False}
+
+    # Destination: prefer explicit coords (demo seed events), else a free-text
+    # address that the Routes API will geocode (real calendar events).
+    if body.dest_lat is not None and body.dest_lng is not None:
+        destination = {"location": {"latLng": {"latitude": body.dest_lat, "longitude": body.dest_lng}}}
+    elif body.dest_address:
+        destination = {"address": body.dest_address}
+    else:
+        return {"available": False}
+
+    payload = {
+        "origin": {"location": {"latLng": {"latitude": body.origin_lat, "longitude": body.origin_lng}}},
+        "destination": destination,
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": MAPS_API_KEY,             # secret — header only, never logged
+        "X-Goog-FieldMask": "routes.duration,routes.distanceMeters",
+    }
+    try:
+        resp = requests.post(ROUTES_ENDPOINT, json=payload, headers=headers, timeout=8)
+        if resp.status_code != 200:
+            logger.warning("Routes API returned %s", resp.status_code)  # status only; no key/body
+            return {"available": False}
+        routes = resp.json().get("routes") or []
+        if not routes:
+            return {"available": False}
+        dur = routes[0].get("duration", "")  # ISO-ish seconds string, e.g. "1083s"
+        secs = int(dur[:-1]) if dur.endswith("s") and dur[:-1].isdigit() else None
+        if secs is None:
+            return {"available": False}
+        minutes = max(1, round(secs / 60))
+        meters = routes[0].get("distanceMeters")
+        return {
+            "available": True,
+            "duration_min": minutes,
+            "text": _fmt_commute(minutes),
+            "distance_km": round(meters / 1000, 1) if isinstance(meters, (int, float)) else None,
+        }
+    except Exception as e:  # network/timeout/parse — fail soft, never leak the key
+        logger.warning("Routes API call failed: %s", type(e).__name__)  # type only; no key/body
+        return {"available": False}
 
 
 # --- Undo (reverses logged actions; never guesses) ---------------------------

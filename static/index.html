@@ -468,6 +468,9 @@
     padding: 1px 9px; border-radius: 999px; margin-top: 5px;
   }
   .ev .ev-cont { font-size: 13px; color: var(--text-faint); font-style: italic; }
+  /* Located event: place line + asynchronously-filled commute time. */
+  .ev .ev-loc { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  .ev .ev-commute { color: var(--accent-ink); font-weight: 600; }
   .ev.kairos.cont {
     margin-top: -3px;                 /* pull continuation rows up so the set reads together */
     background: var(--surface-2);     /* lighter than the full Part-1 block */
@@ -1123,7 +1126,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !demoMod
 // ---------- DEMO / GUEST MODE (real agent reasoning on a seeded calendar) ----------
 // A self-contained sandbox: no Google login, no Firestore, no real calendar writes.
 // Runs against /agent/demo/run, which reuses the live agent reasoning server-side.
-const DEMO = { active: false, timeline: [], drafts: [] };
+const DEMO = { active: false, timeline: [], drafts: [], origin: null };
 
 function enterDemo() {
   DEMO.active = true;
@@ -1145,16 +1148,47 @@ function enterDemo() {
   deadlineEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (!goalEl.value) goalEl.value = "Finish a 12-hour research report";
   showView("app");
+  // Show the seeded sample week immediately (below the command card) so a judge
+  // sees a realistic populated calendar before running anything; a run then ADDS
+  // the Kairos focus blocks to this same timeline.
+  loadDemoSeed();
+}
+
+// Fetch the seeded demo week (no agent run) and render it under the command card.
+async function loadDemoSeed() {
+  try {
+    const data = await api("/agent/demo/seed");
+    DEMO.timeline = data.timeline || [];
+    DEMO.origin = data.origin || null;
+    showDemoSeedCalendar();
+  } catch (_) { /* if the seed can't load, demo still works — just run a goal */ }
+}
+
+// Reveal the results section (stacked under the command card) showing ONLY the
+// seeded timeline — no run receipt, drafts, range bar, or undo controls yet.
+function showDemoSeedCalendar() {
+  if (!DEMO.active) return;
+  views.results.hidden = false;       // stack beneath the app view's command card
+  el("results-title").textContent = "Your week (sample calendar)";
+  el("run-another").hidden = true;    // they run via the command card above
+  workingEl.hidden = true;
+  el("receipt-card").hidden = true;
+  el("drafts-card").hidden = true;
+  el("undo-status").hidden = true;
+  el("range-bar").hidden = true;
+  footerEl.hidden = true;
+  renderTimeline(DEMO.timeline || [], null);   // reveals #results + #timeline-card
 }
 
 function exitDemo() {
   DEMO.active = false;
-  DEMO.timeline = []; DEMO.drafts = [];
+  DEMO.timeline = []; DEMO.drafts = []; DEMO.origin = null;
   document.documentElement.removeAttribute("data-demo");
   el("demo-banner").hidden = true;
   el("hero-demo-note").hidden = true;
   // Clear any demo results so nothing leaks into the live view.
   el("receipt-card").hidden = true; el("timeline-card").hidden = true; el("drafts-card").hidden = true;
+  el("run-another").hidden = false;   // restore default (demo seed view hid it)
   resultsEl.hidden = true;
   showView("landing");
   refreshAuth();   // restore the real (logged-out/in) header + gate
@@ -1242,6 +1276,7 @@ async function runKairos() {
   // Move to the dedicated results view, show working animation.
   showView("results");
   el("results-title").textContent = DEMO.active ? "Kairos results · DEMO" : "Kairos results";
+  el("run-another").hidden = false;   // restore (demo seed view hides it pre-run)
   el("undo-status").hidden = true;
   footerEl.hidden = DEMO.active;   // undo-all needs a real account — hide in demo
   setRangeDefaults();
@@ -1698,6 +1733,17 @@ function renderTimeline(events, runResult) {
           titleCell = `<div class="title">${esc(chunk ? chunk.base : titleText)}</div>${goalLabel}`;
         }
 
+        // Located events get a place line + an (initially empty) commute slot that
+        // hydrateCommutes() fills in asynchronously. Events with no location show
+        // nothing extra. Focus blocks have no location, so they never get this.
+        if (ev.location) {
+          const geo = ev.geo || {};
+          const coordAttrs = (geo.lat != null && geo.lng != null)
+            ? ` data-dlat="${esc(geo.lat)}" data-dlng="${esc(geo.lng)}"` : "";
+          titleCell += `<div class="ev-loc">📍 ${esc(ev.location)}` +
+            `<span class="ev-commute" data-daddr="${esc(ev.location)}"${coordAttrs}></span></div>`;
+        }
+
         const actions = kairos
           ? `<span class="badge">KAIROS</span>
              <button class="ev-dismiss" data-dismiss="${esc(ev.id)}" title="Remove this focus block" aria-label="Dismiss this Kairos block">✕</button>`
@@ -1715,6 +1761,54 @@ function renderTimeline(events, runResult) {
   card.innerHTML = html;
   card.hidden = false;
   resultsEl.hidden = false;
+  hydrateCommutes(card);   // fill in travel times for located events (best-effort)
+}
+
+// ---------- commute time (Google Maps; additive, degrades silently) ----------
+// Asks for the browser location once, then asks the backend (which holds the Maps
+// key) for drive time to each located event. ANY failure — no support, denied
+// permission, missing key, API error — just omits the commute time. Never errors.
+let _geoPromise = null;
+function getUserLocation() {
+  if (_geoPromise) return _geoPromise;
+  _geoPromise = new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),                       // denied / unavailable → silent omit
+      { timeout: 8000, maximumAge: 300000 }
+    );
+  });
+  return _geoPromise;
+}
+async function hydrateCommutes(scope) {
+  const spans = scope.querySelectorAll(".ev-commute");
+  if (!spans.length) return;
+  // Demo mode uses a FIXED Bhubaneswar origin (no GPS prompt) so commute times are
+  // realistic and consistent for any judge; the live app uses the real location.
+  const origin = DEMO.active
+    ? (DEMO.origin && { lat: DEMO.origin.lat, lng: DEMO.origin.lng })
+    : await getUserLocation();
+  if (!origin) return;                           // no permission/support → omit
+  spans.forEach(async (span) => {
+    const body = { origin_lat: origin.lat, origin_lng: origin.lng };
+    if (span.dataset.dlat && span.dataset.dlng) {
+      body.dest_lat = +span.dataset.dlat; body.dest_lng = +span.dataset.dlng;
+    } else if (span.dataset.daddr) {
+      body.dest_address = span.dataset.daddr;
+    } else { return; }
+    try {
+      const r = await api("/commute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (r && r.available && r.text) {
+        span.textContent = ` · 🚗 ${r.text} away`;
+        span.classList.add("show");
+      }
+    } catch (_) { /* silent: just omit the commute time */ }
+  });
 }
 
 // ---------- drafts (Lane B) ----------
