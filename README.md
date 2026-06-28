@@ -38,6 +38,8 @@ Every autonomous change comes with a one-line receipt and an undo.
   - **Due-date normalization** — subtask deadlines are clamped to the `(now, deadline]` window.
 - **Lane B — confirm-first rescue drafts.** When the deadline truly can't be met, Kairos drafts an extension/heads-up message and saves it for you to **confirm / edit / dismiss**. Confirming only *marks it approved* — **no send capability and no Gmail scope**, by design. You copy and send it yourself.
 - **Demo / guest mode.** Judges and first-time visitors can run the **real agent reasoning** against a **seeded sample calendar** with **no login** — no OAuth, no real calendar writes. The agent's actual Gemini planning runs; the results are shown in a sandboxed timeline.
+- **Voice input.** Dictate your goal (and deadline) by voice using the browser's **Web Speech API** — speech is transcribed straight into the goal field, with best-effort natural-language deadline parsing. Degrades gracefully to typing where speech isn't supported.
+- **Commute times.** For calendar events that have a location, Kairos shows the live driving time to get there via the **Google Maps Routes API** (the API key stays server-side and is never exposed to the browser). Most visible in demo mode, where seeded events carry real **Bhubaneswar** locations and travel times are computed from a fixed demo origin.
 - **Light / dark themes** — a warm "summer" light theme and a full dark theme.
 
 ---
@@ -65,8 +67,9 @@ Kairos is a single **FastAPI (Python)** service that serves a single-page fronte
 | **Firestore** | Single source of truth — subtasks, plan/action log, user prefs, and OAuth refresh tokens. Used directly over ADC. |
 | **Cloud Run** | Hosts the FastAPI app + agent loop. The GCP deploy target. |
 | **Google OAuth 2.0** | Direct OAuth (google-auth / google-auth-oauthlib, PKCE) for Calendar access. Refresh tokens stored in Firestore for durable, server-side agent runs. Minimum scopes only: `calendar.events` + `calendar.freebusy` + `openid`/`email`/`profile`. **Never a Gmail-send scope.** |
+| **Google Maps Routes API** | Computes live driving time from the user's location to located events. Called server-side via a dedicated `/commute` endpoint so the Maps API key never reaches the browser; the front end renders the returned travel time inline. |
 
-Frontend: a single static `index.html` (vanilla HTML/CSS/JS) served directly by FastAPI — no separate build step.
+Frontend: a single static `index.html` (vanilla HTML/CSS/JS) served directly by FastAPI — no separate build step. Voice input uses the browser-native **Web Speech API** (no key, no external service).
 
 ---
 
@@ -146,5 +149,4 @@ Reported honestly:
 
 - **Same-day packing.** Focus blocks can cluster into a single day; the agent steers block sizing by effort prompt rather than inserting breaks or load-balancing across multiple days. **Planned:** deterministic break-insertion and multi-day load balancing.
 - **Block sizing is effort-prompt-steered, not minute-accounted.** The hard guarantee is the ≤8-events-per-run cap; exact total-minutes ≈ sum-of-efforts is not enforced.
-- **Planned features:** Google Maps commute awareness ("leave now" / commute-adjusted scheduling), and voice goal capture (Web Speech API).
 - **Planned ops:** GitHub-triggered continuous deployment to Cloud Run.
