@@ -49,6 +49,7 @@ import logging
 import os
 import pathlib
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from datetime import datetime, timedelta, timezone
@@ -1522,8 +1523,17 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
             break
 
         contents.append(resp.candidates[0].content)  # model's function-call turn
-        tool_parts = []
-        for fc in fcs:
+        # Function responses are assembled by position so the order matches `fcs`
+        # exactly, regardless of the order calendar inserts finish below.
+        tool_parts = [None] * len(fcs)
+        turn_records: dict[int, dict] = {}   # idx -> action_log record, appended in fc order
+        create_jobs: list[tuple[int, dict]] = []  # (idx, args) inserts to run concurrently
+        # Budget reserved THIS turn but not yet folded into the run totals. Lets the
+        # cap checks below stay identical while the inserts are deferred + batched.
+        pending_actions = 0   # reserved creates + executed non-create Lane A this turn
+        pending_events = 0    # reserved create_calendar_event slots this turn
+
+        for i, fc in enumerate(fcs):
             name = fc.name
             args = dict(fc.args) if fc.args else {}
 
@@ -1533,28 +1543,22 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
                 payload = {"snapshot": last_snapshot}
 
             elif name == "create_calendar_event":  # hard per-run event cap + halt
-                if events_created >= MAX_EVENTS_PER_RUN or len(executed_actions) >= AGENT_MAX_ACTIONS:
+                if (events_created + pending_events) >= MAX_EVENTS_PER_RUN \
+                        or (len(executed_actions) + pending_actions) >= AGENT_MAX_ACTIONS:
                     halted = True
                     payload = {"status": "halted",
                                "note": f"per-run cap reached (max {MAX_EVENTS_PER_RUN} events); "
                                        "stop creating events."}
                 else:
-                    try:
-                        result, record = execute_lane_a(
-                            sub, data, session, client, name, args, prefs,
-                            run_deadline=deadline, run_goal=goal,
-                        )
-                        executed_actions.append(record)
-                        events_created += 1  # count only events that were actually created
-                        payload = {"status": "executed", **result}
-                    except Exception as e:  # feed the error back so the model can adapt
-                        detail = e.detail if isinstance(e, HTTPException) else str(e)
-                        logger.warning("create_calendar_event failed: %s", detail)
-                        payload = {"status": "error",
-                                   "detail": detail if isinstance(detail, (str, dict, list)) else str(detail)}
+                    # Reserve the slot now (so caps are enforced in fc order) and defer
+                    # the actual Calendar insert so all inserts this turn run in parallel.
+                    pending_events += 1
+                    pending_actions += 1
+                    create_jobs.append((i, args))
+                    payload = None  # filled in after the concurrent inserts complete
 
             elif name in LANE_A_TOOLS:  # other reversible writes (tasks) + log
-                if len(executed_actions) >= AGENT_MAX_ACTIONS:
+                if (len(executed_actions) + pending_actions) >= AGENT_MAX_ACTIONS:
                     payload = {"status": "skipped", "note": f"action limit ({AGENT_MAX_ACTIONS}) reached"}
                 else:
                     try:
@@ -1562,7 +1566,8 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
                             sub, data, session, client, name, args, prefs,
                             run_deadline=deadline, run_goal=goal,
                         )
-                        executed_actions.append(record)
+                        turn_records[i] = record
+                        pending_actions += 1
                         payload = {"status": "executed", **result}
                     except Exception as e:
                         detail = e.detail if isinstance(e, HTTPException) else str(e)
@@ -1606,7 +1611,45 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
             else:
                 payload = {"status": "unknown_tool"}
 
-            tool_parts.append(types.Part.from_function_response(name=name, response=payload))
+            if payload is not None:
+                tool_parts[i] = types.Part.from_function_response(name=name, response=payload)
+
+        # Execute the reserved calendar inserts CONCURRENTLY. Same blocks, same
+        # clutch marker (set in _cal_create), same per-block undo record — only the
+        # I/O is parallelized. Each worker catches its own error so one failed
+        # insert never drops the others or crashes the run.
+        def _do_create(idx: int, c_args: dict):
+            try:
+                result, record = execute_lane_a(
+                    sub, data, session, client, "create_calendar_event", c_args, prefs,
+                    run_deadline=deadline, run_goal=goal,
+                )
+                return idx, {"status": "executed", **result}, record
+            except Exception as e:  # feed the error back so the model can adapt
+                detail = e.detail if isinstance(e, HTTPException) else str(e)
+                logger.warning("create_calendar_event failed: %s", detail)
+                return idx, {"status": "error",
+                             "detail": detail if isinstance(detail, (str, dict, list)) else str(detail)}, None
+
+        if len(create_jobs) == 1:
+            create_results = [_do_create(*create_jobs[0])]  # no thread overhead for a single insert
+        elif create_jobs:
+            with ThreadPoolExecutor(max_workers=len(create_jobs)) as pool:
+                create_results = list(pool.map(lambda job: _do_create(*job), create_jobs))
+        else:
+            create_results = []
+
+        for idx, payload, record in create_results:
+            tool_parts[idx] = types.Part.from_function_response(
+                name="create_calendar_event", response=payload)
+            if record is not None:  # count + log only inserts that actually succeeded
+                turn_records[idx] = record
+                events_created += 1
+
+        # Fold this turn's action records into the run log in fc order.
+        for idx in sorted(turn_records):
+            executed_actions.append(turn_records[idx])
+
         contents.append(types.Content(role="tool", parts=tool_parts))
 
         if halted:  # a hard cap was hit this turn — stop the run now
