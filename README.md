@@ -6,8 +6,6 @@ An autonomous AI productivity agent that doesn't just remind you about deadlines
 
 **🔗 Live demo:** https://clutch-477737446663.asia-south1.run.app
 
-> Built for the **Vibe2Ship** hackathon with Claude Code in VS Code, deployed on Google Cloud Platform (Cloud Run).
-
 ---
 
 ## The problem
@@ -150,7 +148,3 @@ Reported honestly:
 - **Block sizing is effort-prompt-steered, not minute-accounted.** The hard guarantee is the ≤8-events-per-run cap; exact total-minutes ≈ sum-of-efforts is not enforced.
 - **Planned features:** Google Maps commute awareness ("leave now" / commute-adjusted scheduling), and voice goal capture (Web Speech API).
 - **Planned ops:** GitHub-triggered continuous deployment to Cloud Run.
-
----
-
-*Built with Claude Code in VS Code for the Vibe2Ship hackathon. Deployed on Google Cloud Platform (Cloud Run).*
