@@ -810,6 +810,20 @@
       </div>
     </section>
 
+    <!-- Compact upcoming-events preview (logged-in real app + demo). The full
+         schedule lives in the results view via "View full schedule". -->
+    <section class="card" id="preview-card" hidden>
+      <div class="tl-head">
+        <p class="section-title" style="margin:0">Upcoming events</p>
+        <div class="legend">
+          <span><span class="sw k"></span>Kairos block</span>
+          <span><span class="sw u"></span>Your event</span>
+        </div>
+      </div>
+      <div id="preview-list"></div>
+      <button class="btn ghost sm" id="view-full-schedule" style="margin-top:14px">View full schedule →</button>
+    </section>
+
   </section>
 
   <!-- ============ RESULTS (working + receipts + timeline + drafts) ============ -->
@@ -994,6 +1008,9 @@ function showView(name, push = true, replace = false) {
   // ever shows when the user is genuinely logged out. (Skipped in demo mode —
   // there's no real session and we must not bounce the guest to the gate.)
   if (!DEMO.active && (name === "app" || name === "approved")) refreshAuth();
+  // Demo has no auth refresh to repaint the preview — re-render it whenever the
+  // user returns to the main page so the seeded "Upcoming events" always persists.
+  if (DEMO.active && name === "app") loadPreview();
   try {
     if (replace) history.replaceState({ view: name }, "", "#" + name);
     else if (push) history.pushState({ view: name }, "", "#" + name);
@@ -1091,6 +1108,7 @@ function setLoggedOut() {
   resultsEl.hidden = true;
   footerEl.hidden = true;
   workingEl.hidden = true;
+  el("preview-card").hidden = true; // no preview at the connect gate
   setApprovedNav(0); // no drafts / nav entry when logged out
 }
 
@@ -1109,6 +1127,7 @@ function setLoggedIn(me) {
   }
   setRangeDefaults();
   loadDrafts(); // keep the Approved nav count in sync once we know who's logged in
+  loadPreview(); // compact "Upcoming events" preview on the main page
 }
 
 el("gate-connect").onclick = () => (window.location.replace("/login"));
@@ -1148,36 +1167,10 @@ function enterDemo() {
   deadlineEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   if (!goalEl.value) goalEl.value = "Finish a 12-hour research report";
   showView("app");
-  // Show the seeded sample week immediately (below the command card) so a judge
-  // sees a realistic populated calendar before running anything; a run then ADDS
-  // the Kairos focus blocks to this same timeline.
-  loadDemoSeed();
-}
-
-// Fetch the seeded demo week (no agent run) and render it under the command card.
-async function loadDemoSeed() {
-  try {
-    const data = await api("/agent/demo/seed");
-    DEMO.timeline = data.timeline || [];
-    DEMO.origin = data.origin || null;
-    showDemoSeedCalendar();
-  } catch (_) { /* if the seed can't load, demo still works — just run a goal */ }
-}
-
-// Reveal the results section (stacked under the command card) showing ONLY the
-// seeded timeline — no run receipt, drafts, range bar, or undo controls yet.
-function showDemoSeedCalendar() {
-  if (!DEMO.active) return;
-  views.results.hidden = false;       // stack beneath the app view's command card
-  el("results-title").textContent = "Your week (sample calendar)";
-  el("run-another").hidden = true;    // they run via the command card above
-  workingEl.hidden = true;
-  el("receipt-card").hidden = true;
-  el("drafts-card").hidden = true;
-  el("undo-status").hidden = true;
-  el("range-bar").hidden = true;
-  footerEl.hidden = true;
-  renderTimeline(DEMO.timeline || [], null);   // reveals #results + #timeline-card
+  // Show a compact "Upcoming events" preview of the seeded sample week immediately
+  // (on the main page) so a judge sees a realistic calendar before running; "View
+  // full schedule" opens the complete timeline, and a run ADDS Kairos blocks.
+  loadPreview();
 }
 
 function exitDemo() {
@@ -1188,7 +1181,7 @@ function exitDemo() {
   el("hero-demo-note").hidden = true;
   // Clear any demo results so nothing leaks into the live view.
   el("receipt-card").hidden = true; el("timeline-card").hidden = true; el("drafts-card").hidden = true;
-  el("run-another").hidden = false;   // restore default (demo seed view hid it)
+  el("preview-card").hidden = true;
   resultsEl.hidden = true;
   showView("landing");
   refreshAuth();   // restore the real (logged-out/in) header + gate
@@ -1763,6 +1756,73 @@ function renderTimeline(events, runResult) {
   resultsEl.hidden = false;
   hydrateCommutes(card);   // fill in travel times for located events (best-effort)
 }
+
+// ---------- main-page preview (compact "Upcoming events" + full-schedule link) ----------
+// One read-only event row, reusing the timeline's classes so styling, location,
+// commute hydration, and Kairos-vs-user distinction are identical.
+function previewRowHTML(ev) {
+  const kairos = !!ev.kairos;
+  const time = ev.all_day ? "All day"
+    : `${fmtTime(new Date(ev.start))}<br>${fmtTime(new Date(ev.end))}`;
+  let titleText = ev.summary || "(untitled)";
+  let goalLabel = "";
+  if (kairos && ev.goal) {
+    titleText = cleanBlockTitle(ev.summary, ev.goal);
+    goalLabel = `<div class="ev-goal">🎯 ${esc(ev.goal)}</div>`;
+  }
+  const chunk = kairos ? parseChunk(titleText) : null;
+  if (chunk) titleText = chunk.base;
+  let locCell = "";
+  if (ev.location) {
+    const geo = ev.geo || {};
+    const coordAttrs = (geo.lat != null && geo.lng != null)
+      ? ` data-dlat="${esc(geo.lat)}" data-dlng="${esc(geo.lng)}"` : "";
+    locCell = `<div class="ev-loc">📍 ${esc(ev.location)}` +
+      `<span class="ev-commute" data-daddr="${esc(ev.location)}"${coordAttrs}></span></div>`;
+  }
+  const badge = kairos ? `<span class="badge">KAIROS</span>` : `<span class="badge">Your event</span>`;
+  return `<div class="ev ${kairos ? "kairos" : "user"}">
+      <div class="time">${time}</div>
+      <div><div class="title">${esc(titleText)}</div>${goalLabel}${locCell}</div>
+      <div class="ev-actions">${badge}</div>
+    </div>`;
+}
+// Render the next 2–3 upcoming events into the main-page preview card.
+function renderPreview(events) {
+  const card = el("preview-card"), list = el("preview-list");
+  if (!card || !list) return;
+  const now = new Date();
+  const upcoming = (events || [])
+    .filter((e) => e.start && new Date(e.end || e.start) >= now)
+    .sort((a, b) => new Date(a.start) - new Date(b.start));
+  if (!upcoming.length) {
+    list.innerHTML = `<div class="empty">No upcoming events. Run Kairos to plan and book your focus blocks.</div>`;
+  } else {
+    list.innerHTML = upcoming.slice(0, 3).map(previewRowHTML).join("");
+  }
+  card.hidden = false;
+  hydrateCommutes(list);   // fill in travel times for located events (best-effort)
+}
+// Load the data behind the preview: demo uses the seeded week; real fetches the
+// next week of calendar events. Failures simply hide the preview (never an error).
+async function loadPreview() {
+  if (DEMO.active) {
+    if (!DEMO.timeline.length) {
+      try {
+        const data = await api("/agent/demo/seed");
+        DEMO.timeline = data.timeline || [];
+        DEMO.origin = data.origin || null;
+      } catch (_) { /* seed unavailable — demo still works via a run */ }
+    }
+    renderPreview(DEMO.timeline);
+    return;
+  }
+  try {
+    const data = await api("/ui/timeline?hours=168");
+    renderPreview(data.events || []);
+  } catch (_) { el("preview-card").hidden = true; }
+}
+el("view-full-schedule").onclick = openSchedule;
 
 // ---------- commute time (Google Maps; additive, degrades silently) ----------
 // Asks for the browser location once, then asks the backend (which holds the Maps
