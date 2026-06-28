@@ -8,11 +8,11 @@ that PROACTIVELY plans, prioritizes, and AUTONOMOUSLY acts to help users finish
 tasks before deadlines (NOT passive reminders).
 
 ## Build & deploy constraints
-- Builder: **Claude Code in VS Code** (local development). NOT AI Studio Build Mode.
+- Local development; deployed via `gcloud`.
 - Deploy requirement: the solution must be **deployed on Google Cloud Platform**
-  (Cloud Run). AI Studio is optional, not mandatory — organizer confirmed
-  AI Studio / Antigravity / manual deploy are all acceptable as long as it lands
-  on GCP. (Keep this clarification IN WRITING before final submit.)
+  (Cloud Run). AI Studio is optional, not mandatory — organizer confirmed manual
+  deploy is acceptable as long as it lands on GCP. (Keep this clarification IN
+  WRITING before final submit.)
 - Open-source libraries allowed with proper credit.
 - We wire up auth / OAuth scopes / Firestore / Cloud Scheduler ourselves in code.
 
@@ -37,9 +37,11 @@ tasks before deadlines (NOT passive reminders).
 - **Google Calendar API stays** — it is the product's action surface ("the
   save"). Highest-friction tool but irreplaceable; pay the OAuth cost.
 - Cloud Run, Firestore, Gemini, Cloud Scheduler all kept (load-bearing).
+- **Google Maps Routes API** added for commute times (server-side key); **Web
+  Speech API** (browser) added for voice input. Both are built.
 
-## Implemented so far (build steps 1–7)
-- Cloud Run hello-world deploy path proven (step 1).
+## Implemented so far
+- Cloud Run deploy path proven.
 - Direct Google OAuth 2.0 login (`/login`, `/oauth2callback`, `/me`); PKCE
   verifier keyed by OAuth `state` (works across instances).
 - Firestore persistence (ADC, no key file): `users/{sub}` (tokens + `prefs`),
@@ -47,7 +49,7 @@ tasks before deadlines (NOT passive reminders).
   write back.
 - Read path `/snapshot` (`get_schedule_snapshot`): Calendar events + free/busy + tasks.
 - Gemini function-calling agent loop (`/agent/run`, `/agent/plan`) on **Vertex AI**;
-  deterministic pre-ranker; step cap 16.
+  deterministic pre-ranker; step cap 24.
 - Lane A executed (create/reschedule events; `break_down_task`/`upsert_task`/
   `reprioritize` → Firestore). `notify_user` surfaces deadline-feasibility warnings.
 - Lane B IMPLEMENTED (`draft_message`, confirm-first): on deadline-infeasibility
@@ -56,12 +58,29 @@ tasks before deadlines (NOT passive reminders).
   `POST /agent/draft/{id}/confirm|edit|dismiss`. Confirm only MARKS it approved
   (`sent=false`); edit reopens to `proposed`; dismiss marks dismissed. There is
   NO send capability and NO Gmail scope — by design.
-- Action log + single undo (`/agent/undo`, `/agent/undo/{id}`) and bulk
-  `/agent/undo-all` (deletes ONLY `clutch`-marked events — never the user's own).
+- Action log + single undo (`/agent/undo`, `/agent/undo/{id}`), per-block dismiss
+  (`/agent/undo-event/{id}`), and bulk `/agent/undo-all` (delete ONLY
+  `clutch`-marked events — never the user's own).
 - Guards: deterministic working-hours enforcement (08:00–22:00 Asia/Kolkata
   default, per-user prefs) + max 2h block; hard caps `MAX_EVENTS_PER_RUN=8`
-  (halts the run) and `AGENT_MAX_ACTIONS=10`; subtask due-dates normalized to
-  (now, deadline].
+  (halts the run) and `AGENT_MAX_ACTIONS=20` (step cap 24); subtask due-dates
+  normalized to (now, deadline].
+- Humane scheduling (prompt-steered): when the deadline has runway the agent
+  spreads focus blocks across days with comfortable breaks (~30-min gaps + a
+  midday meal break); when the deadline is tight it packs densely. Fitting the
+  whole effort before the deadline always takes priority over break length.
+- Voice input (frontend, Web Speech API): goal/deadline dictation with best-effort
+  natural-language deadline parsing; graceful fallback to typing when unsupported.
+- Google Maps commute times (Routes API): `POST /commute` computes drive time from
+  the user's location to a located event; the Maps key is server-side only and
+  never reaches the browser. Travel time renders inline on located events.
+- Demo / guest mode (parallel path; live agent untouched): real agent reasoning on
+  a seeded in-memory sample calendar, no OAuth/Firestore/real writes. The seeded
+  week shows on entry; commute uses a FIXED Bhubaneswar origin with seeded
+  Bhubaneswar locations. `GET /agent/demo/seed`, `POST /agent/demo/run`.
+- Main-page schedule preview: a compact "Upcoming events" list (next 2–3 events)
+  with a "View full schedule" link to the complete timeline; works in both the
+  real app and demo.
 - Known imperfection: block sizing is effort-PROMPT-steered, not deterministically
   minute-accounted; the hard guarantee is the ≤8-events/run cap.
 
@@ -73,8 +92,8 @@ Completeness 5.
 
 ## Hard rules
 - Deadline June 29, 2:00 PM. MVP spine FIRST, demo-proven (~June 27), THEN stretch.
-- Stretch order is fixed: (1) Cloud Scheduler background cron, (2) voice input,
-  (3) Maps commute. Do not build any stretch item before the spine works.
+- Stretch status: voice input and Maps commute are DONE (see "Implemented so
+  far"); Cloud Scheduler background cron remains the one outstanding stretch item.
 - Minimum OAuth scopes only: `calendar.events` + `calendar.freebusy` (verified:
   `freebusy.query` is NOT authorized by `calendar.events`), plus
   `openid`/`email`/`profile` for identity; add `tasks` only for the optional S4

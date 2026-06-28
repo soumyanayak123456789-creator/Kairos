@@ -30,6 +30,7 @@ Every autonomous change comes with a one-line receipt and an undo.
 
 - **Agentic loop** — a bounded perceive → prioritize → plan → act → observe loop. A deterministic pre-ranker scores tasks by deadline pressure and effort; Gemini (function-calling) decides what to do; the loop executes and observes the result.
 - **Lane A — autonomous calendar writes.** Reads free/busy, breaks the goal into varied granular subtasks, and creates focus blocks on your calendar without asking — these are reversible actions on your own planning surface.
+- **Humane scheduling.** When the deadline has runway, Kairos spreads focus blocks across multiple days with comfortable breaks (≈30-minute gaps and a midday meal break) instead of cramming; when the deadline is tight it packs densely to fit the work. Fitting the whole effort before the deadline always takes priority over break length.
 - **Safety guards built in:**
   - **Deletes only Kairos-marked events** — undo and undo-all re-check a server-side marker per event, so your own calendar entries are never touched.
   - **Single undo, bulk undo-all, and per-block dismiss** for fine-grained control.
@@ -37,7 +38,8 @@ Every autonomous change comes with a one-line receipt and an undo.
   - **Runaway cap** — a hard ceiling of **8 events per run** that halts the agent, plus an action budget.
   - **Due-date normalization** — subtask deadlines are clamped to the `(now, deadline]` window.
 - **Lane B — confirm-first rescue drafts.** When the deadline truly can't be met, Kairos drafts an extension/heads-up message and saves it for you to **confirm / edit / dismiss**. Confirming only *marks it approved* — **no send capability and no Gmail scope**, by design. You copy and send it yourself.
-- **Demo / guest mode.** Judges and first-time visitors can run the **real agent reasoning** against a **seeded sample calendar** with **no login** — no OAuth, no real calendar writes. The agent's actual Gemini planning runs; the results are shown in a sandboxed timeline.
+- **Demo / guest mode.** Judges and first-time visitors can run the **real agent reasoning** against a **seeded sample calendar** with **no login** — no OAuth, no real calendar writes. The seeded sample week is shown the moment you enter demo; the agent's actual Gemini planning then adds focus blocks to it, and located events display commute times. Results are sandboxed in-memory.
+- **Schedule preview on the main page.** The home screen shows a compact **"Upcoming events"** list (the next 2–3 events) with a **"View full schedule"** link to the complete timeline (date-range pickers, all events) — in both the real app and demo.
 - **Voice input.** Dictate your goal (and deadline) by voice using the browser's **Web Speech API** — speech is transcribed straight into the goal field, with best-effort natural-language deadline parsing. Degrades gracefully to typing where speech isn't supported.
 - **Commute times.** For calendar events that have a location, Kairos shows the live driving time to get there via the **Google Maps Routes API** (the API key stays server-side and is never exposed to the browser). Most visible in demo mode, where seeded events carry real **Bhubaneswar** locations and travel times are computed from a fixed demo origin.
 - **Light / dark themes** — a warm "summer" light theme and a full dark theme.

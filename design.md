@@ -4,11 +4,11 @@
 
 > **Design provenance:** synthesized by the team lead from three specialist reviews. Technical claims marked **CONFIRMED** or **UNVERIFIED** per the project truthfulness rule.
 >
-> **Build/deploy:** Per organizer clarification, **Google AI Studio is NOT mandatory**; the only deploy requirement is **Google Cloud Platform (Cloud Run)**. Built with **Claude Code in VS Code**, deployed via `gcloud`. *(Keep the organizer clarification in writing before the irreversible final submit.)*
+> **Build/deploy:** Per organizer clarification, **Google AI Studio is NOT mandatory**; the only deploy requirement is **Google Cloud Platform (Cloud Run)**. Deployed via `gcloud`. *(Keep the organizer clarification in writing before the irreversible final submit.)*
 >
 > **Tooling revision (this version):** Two practicality-driven changes. (1) **Google Tasks dropped as a core dependency** — its date-only API forced a workaround and duplicated Calendar + Firestore; subtasks now live in **Firestore**. Mirroring into the real Google Tasks app is an optional stretch nicety. (2) **Auth committed to direct Google OAuth 2.0** (not Firebase Auth) because the agent must act on Calendar in the background (Cloud Scheduler), which needs durable server-side refresh tokens. Maps and voice remain wanted features, sequenced as stretch (see §8).
 >
-> **Build update (as implemented, steps 1–6):** Gemini is accessed via **Vertex AI over Application Default Credentials** (project `project-2fa6ca07-83db-4010-9a4`; region via `VERTEX_LOCATION`, default `global`) — **not** an AI Studio API key — so usage bills the GCP project's credit. Models: `gemini-2.5-flash` primary, `gemini-2.5-flash-lite` fallback (retry-once-then-failover). Lane A actions execute with an action log, single **undo**, and bulk **undo-all** (clutch-marked events only). Deterministic **working-hours enforcement** (08:00–22:00 Asia/Kolkata, per-user prefs in Firestore) + max 2h block, hard per-run caps (**≤8 events — halts the run**; `AGENT_MAX_ACTIONS=10`), and subtask **due-date normalization** to (now, deadline] are all in place.
+> **Build update (as implemented):** Gemini is accessed via **Vertex AI over Application Default Credentials** (project `project-2fa6ca07-83db-4010-9a4`; region via `VERTEX_LOCATION`, default `global`) — **not** an AI Studio API key — so usage bills the GCP project's credit. Models: `gemini-2.5-flash` primary, `gemini-2.5-flash-lite` fallback (retry-once-then-failover). Lane A actions execute with an action log, single **undo**, and bulk **undo-all** (clutch-marked events only). Deterministic **working-hours enforcement** (08:00–22:00 Asia/Kolkata, per-user prefs in Firestore) + max 2h block, hard per-run caps (**≤8 events — halts the run**; `AGENT_MAX_ACTIONS=20`, step cap 24), and subtask **due-date normalization** to (now, deadline] are all in place.
 
 ---
 
@@ -58,7 +58,7 @@ This split is itself an Agentic-Depth argument: judgment about *when* autonomy i
 
 ## 4. Feature list
 
-Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
+Autonomy-first. Buildability = realism for an app on Cloud Run.
 
 | # | Feature | What the agent autonomously DOES | Rubric criterion | Google tech | Buildability |
 |---|---------|----------------------------------|------------------|-------------|--------------|
@@ -67,9 +67,12 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 | 3 | **Re-plan on conflict — "the save"** | On collision/slip, **autonomously moves and rebooks** events and re-sequences subtasks, then reports. The money shot. | Agentic Depth, Innovation, Problem Solving | Calendar API (`events.patch`), Gemini loop | Medium–Hard |
 | 4 | **Triage & prioritize** | Ranks open subtasks by deadline pressure + effort and **commits "what to do now."** | Agentic Depth, Product Experience | Gemini FC, Firestore | Easy–Medium |
 | 5 | **Draft-the-rescue-message** *(Lane B, confirm)* — **IMPLEMENTED** | When a deadline can't be met, **drafts a context-aware heads-up / extension message** and saves it for the user to **confirm / edit / dismiss**. Draft-only; never sent. | Innovation, Product Experience | Gemini generation (no Gmail-send scope) | **IMPLEMENTED** |
-| S1 | **Cloud Scheduler background cron** *(stretch #1)* | Agent runs unattended (morning planning run) with no user click. | Agentic Depth, Innovation | Cloud Scheduler + Cloud Run | Medium |
-| S2 | **Voice goal capture** *(stretch #2)* | Speak a goal; transcribed into feature 1's pipeline. | Product Experience, Innovation | Web Speech API (browser, free) | Easy–Medium |
-| S3 | **Commute-aware "leave now"** *(stretch #3)* | If a fixed event needs travel, auto-adjusts the surrounding schedule. | Innovation | Maps Routes/Places API (needs billing) | Medium |
+| 6 | **Humane scheduling** — **IMPLEMENTED** | Spreads focus blocks across days with comfortable breaks when the deadline has runway; packs densely when it's tight. Fitting the work before the deadline always wins over break length. | Product Experience, Agentic Depth | Gemini loop (prompt-steered) | **IMPLEMENTED** |
+| 7 | **Demo / guest mode** — **IMPLEMENTED** | Real agent reasoning on a seeded in-memory sample calendar with no login (no OAuth/Firestore/real writes). Seeded week shows on entry; located events show commute times from a fixed Bhubaneswar origin. | Product Experience, Innovation | Gemini via Vertex AI (sandboxed) | **IMPLEMENTED** |
+| 8 | **Main-page schedule preview** — **IMPLEMENTED** | Compact "Upcoming events" list (next 2–3) with a "View full schedule" link to the complete timeline. | Product Experience | — (frontend) | **IMPLEMENTED** |
+| S1 | **Cloud Scheduler background cron** *(stretch — outstanding)* | Agent runs unattended (morning planning run) with no user click. | Agentic Depth, Innovation | Cloud Scheduler + Cloud Run | Medium |
+| S2 | **Voice goal/deadline capture** — **IMPLEMENTED** | Speak a goal (and deadline); transcribed into the goal field with best-effort natural-language deadline parsing; falls back to typing when unsupported. | Product Experience, Innovation | Web Speech API (browser, free) | **IMPLEMENTED** |
+| S3 | **Commute times to located events** — **IMPLEMENTED** | Shows live drive time from the user's location to each located event (most visible in demo, with seeded Bhubaneswar locations). Key is server-side only. | Innovation, Google Tech | Maps Routes API (`/commute`, server-side key) | **IMPLEMENTED** |
 | S4 | **Google Tasks mirror** *(optional nicety)* | One-way mirror of Firestore subtasks into the user's real Google Tasks app, so output shows up in a Google surface they already use. | Product Experience, Google Tech | Google Tasks API (`tasks.insert`) | Easy |
 
 ---
@@ -79,7 +82,7 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 ```
                 ┌──────────────────────────────────────────────┐
    Cloud         │            Cloud Run service (our app)        │
-  Scheduler ───▶ │  (built with Claude Code, deployed via gcloud)│
+  Scheduler ───▶ │            (deployed via gcloud)             │
   (cron job) +   │                                              │
   in-app "Run    │   ┌────────────┐   plan    ┌──────────────┐  │
   now" / events  │   │  Agent     │──────────▶│   Gemini     │  │
@@ -104,7 +107,7 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 
 **Identity & OAuth (committed: direct OAuth 2.0).** Use Google OAuth 2.0 via `google-auth` / `google-auth-oauthlib` (PKCE). The consent flow grants `calendar.events` **plus `calendar.freebusy`** — *verified*: `freebusy.query` is NOT authorized by `calendar.events` — and `openid`/`email`/`profile` for identity (and `tasks` only if the optional S4 mirror is built). **Refresh tokens are stored in Firestore** so the agent can make server-side Calendar calls during background (Cloud Scheduler) runs when the user isn't present — this is the capability Firebase Auth makes awkward and is why we don't use it. Request the **minimum scopes**; **never** request a Gmail-send scope (rescue message is draft-only).
 
-**Agent loop.** A bounded single-agent function-calling loop (not a multi-agent ReAct planner — won't be demo-stable in the timeline): Gemini (**via Vertex AI over ADC**) decides → calls a function → loop observes → continues until done or the **step cap (16 turns)**, with hard per-run write caps (**≤8 calendar events — halts the run** — and `AGENT_MAX_ACTIONS=10`). Runs inside the Cloud Run FastAPI service.
+**Agent loop.** A bounded single-agent function-calling loop (not a multi-agent ReAct planner — won't be demo-stable in the timeline): Gemini (**via Vertex AI over ADC**) decides → calls a function → loop observes → continues until done or the **step cap (24 turns)**, with hard per-run write caps (**≤8 calendar events — halts the run** — and `AGENT_MAX_ACTIONS=20`). Runs inside the Cloud Run FastAPI service.
 
 **Gemini function/tool schema** (declared to Gemini; executed server-side):
 
@@ -135,9 +138,9 @@ Autonomy-first. Buildability = realism for a Claude-Code-built app on Cloud Run.
 | **Google Calendar API** | `freebusy.query` to find open time; `events.insert` to book focus blocks; `events.patch` to rebook; `events.delete` for undo. The autonomous-action surface. | **IMPLEMENTED**; OAuth scopes `calendar.events` + `calendar.freebusy` |
 | **Cloud Run** | Hosts the app + agent loop. The GCP deploy target satisfying the requirement. | **CONFIRMED**; `gcloud run deploy` (skeleton deployed) |
 | **Firestore** | Source of truth: subtasks, action log, prefs, OAuth tokens (plan ledger + cursor planned). | **IMPLEMENTED**; provisioned + used directly (ADC) |
-| **Cloud Scheduler** | Cron for unattended proactive runs (stretch #1, S1). | **CONFIRMED + buildable** by us |
-| **Web Speech API** *(stretch #2, S2)* | Browser-side voice capture, free, no key. | **CONFIRMED**; cross-browser uneven (demo in Chrome, text fallback) |
-| **Maps Platform (Routes/Places)** *(stretch #3, S3)* | Commute-aware schedule adjustment. | **CONFIRMED**; **requires a billing account** |
+| **Google Maps Routes API** | Live drive time from the user's location to located events, via a server-side `/commute` endpoint (the Maps key never reaches the browser). Most visible in demo mode with seeded Bhubaneswar locations + a fixed demo origin. | **IMPLEMENTED**; `MAPS_API_KEY` server-side only |
+| **Web Speech API** | Browser-side voice capture for goal/deadline dictation (best-effort NL deadline parsing), free, no key; graceful fallback to typing. | **IMPLEMENTED**; cross-browser uneven (best in Chrome, text fallback) |
+| **Cloud Scheduler** *(stretch — outstanding)* | Cron for unattended proactive runs (S1). | **CONFIRMED + buildable** by us |
 | **Google Tasks API** *(optional nicety, S4)* | One-way mirror of Firestore subtasks into the user's real Google Tasks app. | **CONFIRMED**; `due` date-only (fine for a mirror); extra scope `tasks` |
 
 This is a substantial, genuine Google footprint — Gemini + Calendar + Cloud Run + Firestore are all load-bearing, with Cloud Scheduler, Speech, Maps, and Tasks as real (not decorative) additions. The "Usage of Google Technologies" criterion rewards correct use over tool count; this set is chosen for genuine fit.
@@ -184,7 +187,7 @@ Visual tone: calm, single-accent, "the assistant already handled it" — receipt
 7. **Maps Platform requires a billing account (CONFIRMED).** S3 gated on enabling billing; stays last.
 8. **Dropping Google Tasks slightly reduces the raw Google-API count.** Mitigation: the remaining Google footprint (Gemini + Calendar + Cloud Run + Firestore + Scheduler) is still strong and *genuine*; the optional S4 mirror can add Tasks back if a higher count is wanted. Net: fewer date-only headaches, simpler MVP.
 9. **Gemini billing — RESOLVED.** Gemini runs via **Vertex AI over ADC**, billing the GCP project's trial credit (no AI Studio prepay / API key). Region defaults to `global`; `asia-south1` availability for `gemini-2.5-flash` is **unverified**, which is why `global` is the default (`VERTEX_LOCATION` overrides it).
-10. **Known imperfection (scheduling).** Block sizing is **effort-PROMPT-steered**, not deterministically minute-accounted; the hard guarantee is the **≤8-events/run cap (halts)** plus `AGENT_MAX_ACTIONS=10`. A run can't exceed 8 blocks, but exact total-minutes ≈ sum-of-efforts is not enforced.
+10. **Known imperfection (scheduling).** Block sizing is **effort-PROMPT-steered**, not deterministically minute-accounted; the hard guarantee is the **≤8-events/run cap (halts)** plus `AGENT_MAX_ACTIONS=20`. A run can't exceed 8 blocks, but exact total-minutes ≈ sum-of-efforts is not enforced.
 11. **Rough edge (cosmetic).** Subtask `due` timestamps carry **microsecond precision** (e.g. `...:12.345678+05:30`) because they're derived from `datetime` arithmetic; harmless but ugly in API output. Not fixed — would just round/truncate to the minute.
 12. **Rough edge (past-deadline UX).** A deadline already **in the past** makes `break_down_task` return **empty subtasks**, surfacing a confusing *"couldn't break down the goal"* message instead of either gracefully drafting a rescue or clearly stating *"that deadline has already passed."* Not fixed yet; the right fix is an explicit past-deadline branch.
 
@@ -214,22 +217,23 @@ Self-scores are a sanity check, not an objective measure. The Tasks→Firestore 
 
 ---
 
-## 11. Claude Code build brief (how to build it)
+## 11. Implementation plan & build order
 
-> Build with Claude Code in VS Code; deploy to Cloud Run. MVP spine first; stretch in the S1→S2→S3 order only after the spine demos.
+> Deploy to Cloud Run. MVP spine first; the optional Cloud Scheduler cron and Tasks mirror remain after the spine demos.
 
-**Stack:** Python + FastAPI backend (agent loop + Gemini function-calling + Calendar calls), lightweight frontend (React or plain HTML/JS), Firestore for all state + tasks, Cloud Run for deploy, direct Google OAuth 2.0 for auth.
+**Stack:** Python + FastAPI backend (agent loop + Gemini function-calling + Calendar calls), single static HTML/JS frontend served by FastAPI, Firestore for all state + tasks, Cloud Run for deploy, direct Google OAuth 2.0 for auth.
 
-**Build order (each a Claude Code task):**
-1. **Scaffold + deploy a hello-world to Cloud Run first** (`gcloud run deploy`). Prove the one hard requirement before any logic.
-2. **Direct Google OAuth 2.0** for `calendar.events`, single test account added as an OAuth test user. Store tokens in Firestore.
-3. **Firestore data model:** subtasks (title, effort, status, parent goal, timestamps), plan ledger, action log, prefs, cursor.
-4. **Read path:** `get_schedule_snapshot` — Calendar free/busy + Firestore subtasks. Verify against the real test account.
-5. **Gemini function-calling loop** with the 8-function schema (§5), step-cap ~8, deterministic pre-ranker feeding the model.
-6. **Write path, Lane A:** `create_calendar_event`, `reschedule_event`, `upsert_task`, `reprioritize` — with action log + Undo.
-7. **"The save":** detect collision/slip → autonomously rebook → surface before/after receipt. Demo centerpiece; make the synchronous "Run agent now" trigger bulletproof.
-8. **Lane B:** `draft_message` (draft-only, no Gmail scope) + confirm tray.
-9. **Stretch in order:** S1 Cloud Scheduler cron → S2 voice (Web Speech + text fallback) → S3 Maps (enable billing first) → S4 optional Tasks mirror.
+**Build order:**
+1. **Scaffold + deploy a hello-world to Cloud Run first** (`gcloud run deploy`). Prove the one hard requirement before any logic. *(Done.)*
+2. **Direct Google OAuth 2.0** for `calendar.events`, single test account added as an OAuth test user. Store tokens in Firestore. *(Done.)*
+3. **Firestore data model:** subtasks (title, effort, status, parent goal, timestamps), plan ledger, action log, prefs, cursor. *(Done.)*
+4. **Read path:** `get_schedule_snapshot` — Calendar free/busy + Firestore subtasks. *(Done.)*
+5. **Gemini function-calling loop** with the 8-function schema (§5), step-capped, deterministic pre-ranker feeding the model. *(Done.)*
+6. **Write path, Lane A:** `create_calendar_event`, `reschedule_event`, `upsert_task`, `reprioritize` — with action log + Undo. *(Done.)*
+7. **"The save":** detect collision/slip → autonomously rebook → surface before/after receipt; synchronous "Run agent now" trigger. *(Done.)*
+8. **Lane B:** `draft_message` (draft-only, no Gmail scope) + confirm tray. *(Done.)*
+9. **Done since:** humane scheduling, voice input (Web Speech), Maps commute times (Routes API), demo/guest mode, main-page schedule preview.
+10. **Outstanding:** S1 Cloud Scheduler cron; S4 optional Tasks mirror.
 
 **Guardrails (mirror in CLAUDE.md):**
 - Minimum OAuth scopes (`calendar.events`; add `tasks` only for S4). Never Gmail-send.
@@ -241,4 +245,4 @@ Self-scores are a sanity check, not an objective measure. The Tasks→Firestore 
 
 ---
 
-*Tooling revised for practicality: Firestore replaces Google Tasks as the core store; direct OAuth 2.0 committed for background proactivity; voice and Maps kept as sequenced stretch. Remaining open item is non-technical: secure the organizer's GCP-deploy clarification in writing before final submit.*
+*Tooling revised for practicality: Firestore replaces Google Tasks as the core store; direct OAuth 2.0 committed for background proactivity. Voice input and Maps commute times are now built (see §4/§6); the Cloud Scheduler cron is the one outstanding stretch item. Remaining open item is non-technical: secure the organizer's GCP-deploy clarification in writing before final submit.*
