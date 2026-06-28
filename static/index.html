@@ -337,6 +337,35 @@
   .run-row { margin-top: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .run-hint { color: var(--text-faint); font-size: 12.5px; }
 
+  /* ---- Voice input (Web Speech API; hidden when unsupported) ---- */
+  .goal-input-wrap { position: relative; display: flex; align-items: center; }
+  .goal-input-wrap .input { padding-right: 48px; }
+  .mic-btn {
+    position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+    width: 34px; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border-2); background: var(--surface-2); color: var(--text-dim);
+    border-radius: 8px; cursor: pointer; transition: color .15s, background .15s, border-color .15s;
+  }
+  .mic-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .mic-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  .mic-btn.listening {
+    color: #fff; background: var(--accent); border-color: var(--accent);
+    animation: micpulse 1.4s ease-in-out infinite;
+  }
+  @keyframes micpulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+    50%      { box-shadow: 0 0 0 7px transparent; }
+  }
+  .voice-status {
+    margin-top: 8px; font-size: 12.5px; color: var(--text-dim);
+    display: flex; align-items: center; gap: 7px; min-height: 1.1em; line-height: 1.4;
+  }
+  .voice-status.err { color: var(--danger); }
+  .voice-status .vdot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none;
+    animation: micpulse 1.1s ease-in-out infinite;
+  }
+
   /* ============ Working state — clean progress ============ */
   .working { text-align: center; padding: 40px 24px; }
   .spinner { width: 58px; height: 58px; margin: 0 auto 20px; }
@@ -588,7 +617,8 @@
   @media (prefers-reduced-motion: reduce) {
     .blob { animation: none !important; }
     .spinner svg, .undo-status .mini-spin, .undo-status .ubar > i,
-    .dial-stage.active .node, .ev-dismiss.busy { animation: none !important; }
+    .dial-stage.active .node, .ev-dismiss.busy,
+    .mic-btn.listening, .voice-status .vdot { animation: none !important; }
     .view { animation: none !important; }
     body { transition: none !important; }
   }
@@ -754,7 +784,13 @@
       <div class="field-row">
         <div class="field">
           <label for="goal">Goal</label>
-          <input class="input" id="goal" type="text" placeholder="e.g. Finish the pitch deck for the investor meeting" />
+          <div class="goal-input-wrap">
+            <input class="input" id="goal" type="text" placeholder="e.g. Finish the pitch deck for the investor meeting" />
+            <button type="button" class="mic-btn" id="mic" aria-label="Speak your goal" aria-pressed="false" title="Speak your goal" hidden>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>
+            </button>
+          </div>
+          <div class="voice-status" id="voice-status" hidden></div>
         </div>
         <div class="field">
           <label for="deadline">Deadline</label>
@@ -1248,6 +1284,173 @@ async function runKairos() {
 }
 runBtn.onclick = runKairos;
 goalEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runKairos(); });
+
+// ---------- voice input (Web Speech API; additive, degrades gracefully) ----------
+// Goal-by-voice is the must-have; deadline-by-voice is best-effort and never
+// silently sets a wrong value — it only fills the picker when reasonably confident
+// and always shows what it set so the user can correct it. Typed flow is untouched.
+(function setupVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const micBtn = el("mic"), statusEl = el("voice-status");
+  if (!SR || !micBtn) return;           // unsupported → leave mic hidden, typing still works
+  micBtn.hidden = false;
+
+  let rec = null, listening = false, baseGoal = "", statusTimer = null;
+
+  function setMic(on) {
+    listening = on;
+    micBtn.classList.toggle("listening", on);
+    micBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    micBtn.title = on ? "Stop listening" : "Speak your goal";
+  }
+  function showStatus(msg, { err = false, dot = false } = {}) {
+    clearTimeout(statusTimer);
+    statusEl.hidden = false;
+    statusEl.classList.toggle("err", err);
+    statusEl.innerHTML = (dot ? '<span class="vdot"></span>' : "") +
+      `<span>${msg.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]))}</span>`;
+  }
+  function autoHide(ms) {
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { statusEl.hidden = true; statusEl.classList.remove("err"); }, ms);
+  }
+
+  // ---- best-effort natural-language deadline parser ----
+  const pad = (n) => String(n).padStart(2, "0");
+  const toLocalInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const addDays = (base, n) => { const d = new Date(base); d.setDate(d.getDate() + n); return d; };
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  function nextWeekday(now, target, forceNext) {
+    let diff = (target - now.getDay() + 7) % 7;
+    if (diff === 0 || forceNext) diff = diff === 0 ? 7 : diff;  // "next friday" / today's name → following week
+    return addDays(now, diff);
+  }
+  function parseNLDeadline(raw) {
+    const t = (raw || "").toLowerCase();
+    if (!t.trim()) return null;
+    const now = new Date();
+    const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+    const months = ["january", "february", "march", "april", "may", "june", "july",
+      "august", "september", "october", "november", "december"];
+
+    // time
+    let hour = null, min = 0, hasTime = false;
+    if (/\bnoon\b/.test(t)) { hour = 12; hasTime = true; }
+    else if (/\bmidnight\b/.test(t)) { hour = 0; hasTime = true; }
+    else {
+      const ampm = t.match(/\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\b/);
+      const at = t.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/);
+      if (ampm) {
+        hour = +ampm[1]; min = ampm[2] ? +ampm[2] : 0;
+        const pm = ampm[3].startsWith("p");
+        if (pm && hour < 12) hour += 12;
+        if (!pm && hour === 12) hour = 0;
+        hasTime = true;
+      } else if (at) {
+        hour = +at[1]; min = at[2] ? +at[2] : 0;
+        if (hour >= 1 && hour <= 7) hour += 12;   // "at 5" → 5pm (daytime assumption)
+        hasTime = true;
+      }
+    }
+    if (hasTime && (hour < 0 || hour > 23 || min > 59)) return null;
+
+    // date
+    let date = null, hasDate = false;
+    let m;
+    if (/\btomorrow\b/.test(t)) { date = addDays(now, 1); hasDate = true; }
+    else if (/\btonight\b/.test(t)) { date = new Date(now); hasDate = true; if (!hasTime) { hour = 20; min = 0; hasTime = true; } }
+    else if (/\btoday\b/.test(t)) { date = new Date(now); hasDate = true; }
+    else if ((m = t.match(/\bin\s+(\d{1,3})\s+days?\b/))) { date = addDays(now, +m[1]); hasDate = true; }
+    else if (/\bnext\s+week\b/.test(t)) { date = addDays(now, 7); hasDate = true; }
+    else {
+      for (let i = 0; i < 7 && !hasDate; i++) {
+        const wm = t.match(new RegExp("\\b(next\\s+)?" + weekdays[i] + "\\b"));
+        if (wm) { date = nextWeekday(now, i, !!wm[1]); hasDate = true; }
+      }
+      for (let i = 0; i < 12 && !hasDate; i++) {
+        const md = t.match(new RegExp("\\b" + months[i] + "\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b"))
+                || t.match(new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+" + months[i] + "\\b"));
+        if (md) {
+          const day = +md[1];
+          if (day < 1 || day > 31) break;
+          let cand = new Date(now.getFullYear(), i, day, 0, 0, 0, 0);
+          if (cand < startOfDay(now)) cand = new Date(now.getFullYear() + 1, i, day);
+          date = cand; hasDate = true;
+        }
+      }
+    }
+
+    if (!hasDate && !hasTime) return null;
+    // Confidence gate: require a real date keyword, or an explicit am/pm/noon/midnight time.
+    // A bare "at 5" with no date is too ambiguous to commit — leave it to the user.
+    const confident = hasDate || /\b\d{1,2}(:\d{2})?\s*(a\.?m\.?|p\.?m\.?)\b|\bnoon\b|\bmidnight\b/.test(t);
+    if (!confident) return null;
+
+    const d = hasDate ? new Date(date) : new Date(now);
+    d.setHours(hasTime ? hour : 18, hasTime ? min : 0, 0, 0);  // default 18:00 when only a date is spoken
+    if (!hasDate && hasTime && d <= now) d.setDate(d.getDate() + 1);  // time-only already passed → tomorrow
+    if (isNaN(d.getTime()) || d <= now) return null;
+    return d;
+  }
+
+  function finalize() {
+    const text = goalEl.value.trim();
+    if (!text) { statusEl.hidden = true; return; }
+    const d = parseNLDeadline(text);
+    if (d) {
+      deadlineEl.value = toLocalInput(d);
+      const nice = d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+      showStatus("Goal set ✓ · deadline heard as " + nice + " — adjust if wrong");
+      autoHide(6000);
+    } else {
+      showStatus("Goal set ✓ · set the deadline yourself");
+      autoHide(3500);
+    }
+  }
+
+  function start() {
+    rec = new SR();
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = true;
+    rec.continuous = false;      // auto-stops on a natural silence
+    rec.maxAlternatives = 1;
+    baseGoal = goalEl.value.trim();
+
+    rec.onstart = () => { setMic(true); showStatus("Listening… speak your goal", { dot: true }); };
+    rec.onresult = (e) => {
+      let interim = "", final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
+      }
+      if (final.trim()) baseGoal = (baseGoal ? baseGoal + " " : "") + final.trim();
+      goalEl.value = (baseGoal + (interim ? " " + interim.trim() : "")).trim();   // live transcript
+      if (interim.trim()) showStatus("“" + interim.trim() + "”", { dot: true });
+    };
+    rec.onerror = (e) => {
+      setMic(false);
+      const map = {
+        "not-allowed": "Microphone blocked — allow mic access to use voice (you can still type).",
+        "service-not-allowed": "Microphone blocked — allow mic access to use voice (you can still type).",
+        "no-speech": "Didn't catch that — tap the mic and try again.",
+        "audio-capture": "No microphone found — you can still type.",
+        "network": "Voice service unreachable — you can still type.",
+      };
+      if (e.error === "aborted") { statusEl.hidden = true; return; }
+      const msg = map[e.error] || "Voice input error — you can still type.";
+      showStatus(msg, { err: true }); autoHide(5000); toast(msg, true);
+    };
+    rec.onend = () => { setMic(false); finalize(); };
+
+    try { rec.start(); }
+    catch (_) { setMic(false); showStatus("Couldn't start voice input — you can still type.", { err: true }); autoHide(4000); }
+  }
+
+  micBtn.onclick = () => {
+    if (listening) { try { rec && rec.stop(); } catch (_) {} }
+    else start();
+  };
+})();
 
 // ---------- render the agent's receipt ----------
 // Reduce a booked-block title to just the subtask, so it reads cleanly under the
