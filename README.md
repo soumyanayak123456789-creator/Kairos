@@ -37,11 +37,16 @@ Every autonomous change comes with a one-line receipt and an undo.
   - **Working-hours enforcement** — blocks land only between 08:00–22:00 (Asia/Kolkata default, per-user prefs), with a max block size.
   - **Runaway cap** — a hard ceiling of **8 events per run** that halts the agent, plus an action budget.
   - **Due-date normalization** — subtask deadlines are clamped to the `(now, deadline]` window.
-- **Lane B — confirm-first rescue drafts.** When the deadline truly can't be met, Kairos drafts an extension/heads-up message and saves it for you to **confirm / edit / dismiss**. Confirming only *marks it approved* — **no send capability and no Gmail scope**, by design. You copy and send it yourself.
-- **Demo / guest mode.** Judges and first-time visitors can run the **real agent reasoning** against a **seeded sample calendar** with **no login** — no OAuth, no real calendar writes. The seeded sample week is shown the moment you enter demo; the agent's actual Gemini planning then adds focus blocks to it, and located events display commute times. Results are sandboxed in-memory.
+- **Lane B — confirm-first rescue drafts, tied to their task.** When the deadline truly can't be met, Kairos drafts an extension/heads-up message and saves it for you to **confirm / edit / dismiss**. Confirming only *marks it approved* — **no send capability and no Gmail scope**, by design. You copy and send it yourself. Each task's drafts are captured with its history entry and shown in that task's detail view; deleting a task clears its unconfirmed drafts from the main area, while approved drafts persist on the **Approved** page.
+- **Task history.** Past runs are saved (Firestore in the live app; session-only in demo) and listed on a **Task History** page grouped by creation date, with newest/oldest sort and goal search. Each entry has a per-task delete (×) and there's a clear-all — both remove the task **from history only; your calendar blocks stay**. Open a task to see its focus blocks with a scoped **undo-all** and per-block delete.
+- **Optional goal location.** Each goal can carry an optional location, set with an interactive **Google Maps** pin picker (which also shows a "you are here" marker for your current location). Blocks for a located goal display a short place label, the **commute time** from the origin captured when the goal was created, and a **"See route"** button that opens Google Maps directions. Location is **display metadata only — it does not affect scheduling, subtasks, or any caps**, and it's entirely optional (no location ⇒ blocks render exactly as before).
+- **Demo / guest mode.** Judges and first-time visitors can run the **real agent reasoning** against a **seeded sample calendar** with **no login** — no OAuth, no real calendar writes. The seeded week shows professional sample events (meetings, calls, reviews) placed at **real venues near you** via the **Google Places API**, with commute times from your location; the agent's actual Gemini planning then adds focus blocks. If geolocation, Places, or the Maps key is unavailable, it **falls back** to a fixed Bhubaneswar professional seed so the demo always populates. Results are sandboxed in-memory.
 - **Schedule preview on the main page.** The home screen shows a compact **"Upcoming events"** list (the next 2–3 events) with a **"View full schedule"** link to the complete timeline (date-range pickers, all events) — in both the real app and demo.
 - **Voice input.** Dictate your goal (and deadline) by voice using the browser's **Web Speech API** — speech is transcribed straight into the goal field, with best-effort natural-language deadline parsing. Degrades gracefully to typing where speech isn't supported.
-- **Commute times.** For calendar events that have a location, Kairos shows the live driving time to get there via the **Google Maps Routes API** (the API key stays server-side and is never exposed to the browser). Most visible in demo mode, where seeded events carry real **Bhubaneswar** locations and travel times are computed from a fixed demo origin.
+- **Commute times.** For calendar events that have a location, Kairos shows the live driving time to get there via the **Google Maps Routes API** (the API key stays server-side and is never exposed to the browser).
+- **Consistent confirm dialogs.** Destructive actions — undo-all, per-block dismiss, delete-task, and clear-history — all use a single reusable confirm popup (Yes / No / × close, dismissable by backdrop click or Esc) instead of inline confirmations.
+- **Faster booking.** Focus-block inserts to Google Calendar run **concurrently**, so booking a multi-block plan is quicker. The agent's reasoning and the per-run caps are unchanged.
+- **Responsive layout.** The UI adapts to phone-width screens — layouts stack, the header and cards reflow, modals and the map picker fit the viewport, with no sideways scrolling.
 - **Light / dark themes** — a warm "summer" light theme and a full dark theme.
 
 ---
@@ -69,9 +74,12 @@ Kairos is a single **FastAPI (Python)** service that serves a single-page fronte
 | **Firestore** | Single source of truth — subtasks, plan/action log, user prefs, and OAuth refresh tokens. Used directly over ADC. |
 | **Cloud Run** | Hosts the FastAPI app + agent loop. The GCP deploy target. |
 | **Google OAuth 2.0** | Direct OAuth (google-auth / google-auth-oauthlib, PKCE) for Calendar access. Refresh tokens stored in Firestore for durable, server-side agent runs. Minimum scopes only: `calendar.events` + `calendar.freebusy` + `openid`/`email`/`profile`. **Never a Gmail-send scope.** |
-| **Google Maps Routes API** | Computes live driving time from the user's location to located events. Called server-side via a dedicated `/commute` endpoint so the Maps API key never reaches the browser; the front end renders the returned travel time inline. |
+| **Google Maps Routes API** | Computes live driving time from the user's location to located events. Called server-side via a dedicated `/commute` endpoint so the server-side Maps key never reaches the browser; the front end renders the returned travel time inline. |
+| **Google Maps JavaScript API** | Powers the interactive pin picker for the optional goal location (drop/drag a destination pin, with a current-location marker). Loaded in the browser with a **separate, referrer-restricted** browser key — never the server-side key. If that key is unset, the picker simply hides. |
+| **Google Geocoding API** | Reverse-geocodes a picked pin into a **short place label** (area/place name, not the full address) for display on blocks. Called server-side with the server-side Maps key. |
+| **Google Places API (New)** | Finds **real venues near the viewer** to populate the demo's sample calendar (`places:searchNearby`). Called server-side with the server-side Maps key; falls back to a fixed Bhubaneswar seed on any failure. |
 
-Frontend: a single static `index.html` (vanilla HTML/CSS/JS) served directly by FastAPI — no separate build step. Voice input uses the browser-native **Web Speech API** (no key, no external service).
+Frontend: a single static `index.html` (vanilla HTML/CSS/JS) served directly by FastAPI. Voice input uses the browser-native **Web Speech API** (no key, no external service).
 
 ---
 
@@ -99,6 +107,7 @@ A single **Cloud Run** service runs the FastAPI app, which serves both the SPA a
 **Prerequisites**
 - Python 3.11+ and `pip`
 - A Google Cloud project with **Firestore** and the **Vertex AI** and **Google Calendar** APIs enabled
+- *(Optional, for commute + location + demo-nearby features)* on the **server-side** Maps key, enable the **Routes API**, **Geocoding API**, and **Places API (New)**; for the location pin picker, a **separate, referrer-restricted** browser key with the **Maps JavaScript API** enabled
 - The [`gcloud` CLI](https://cloud.google.com/sdk/docs/install)
 - An OAuth 2.0 **Web application** client ID (Google Cloud Console → APIs & Services → Credentials)
 
@@ -120,6 +129,8 @@ Fill in `.env` with your real values:
 | `OAUTH_REDIRECT_URI` | Must exactly match an authorized redirect URI on the OAuth client (local default: `http://localhost:8080/oauth2callback`) |
 | `GOOGLE_CLOUD_PROJECT` | GCP project that owns Firestore and bills Vertex AI |
 | `VERTEX_LOCATION` | Vertex AI region for Gemini (default `global`) |
+| `MAPS_API_KEY` | *(Optional)* **Server-side only** Maps key — used for the Routes API (commute), Geocoding API (reverse-geocode short labels), and Places API (New) (demo nearby venues). Never sent to the browser. Omit to disable those features. |
+| `MAPS_BROWSER_KEY` | *(Optional)* **Separate, referrer-restricted** browser key with the **Maps JavaScript API** enabled — exposed to the browser only for the goal-location pin picker. If unset, the location picker simply hides; everything else works unchanged. Do **not** reuse the server-side `MAPS_API_KEY` here. |
 
 `.env` is gitignored — never commit real secrets.
 

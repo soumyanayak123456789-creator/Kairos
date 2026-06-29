@@ -838,7 +838,7 @@
   <!-- ============ ABOUT ============ -->
   <section class="view about" id="view-about" hidden>
     <h2>What is Kairos?</h2>
-    <p class="lead">Kairos — Greek for “the decisive moment” — is a proactive AI productivity agent for “The Last-Minute Life Saver.” Instead of passive reminders, it plans your work, prioritizes it, and autonomously books the time on your calendar so deadlines stop sneaking up on you.</p>
+    <p class="lead">Kairos — Greek for “the decisive moment” — is a proactive AI productivity agent for “The Last-Minute Life Saver.” Instead of passive reminders, it plans your work, prioritizes it, and autonomously books the time on your calendar so deadlines stop sneaking up on you. Every run is saved to your task history, and everything it does is reversible with one click.</p>
 
     <div class="steps">
       <div class="step">
@@ -854,7 +854,7 @@
       <div class="step">
         <div class="num">3</div>
         <h3>Act</h3>
-        <p>It books the focus blocks on your calendar within your working hours — and if a deadline looks impossible, it drafts a heads-up message for you to review.</p>
+        <p>It books the focus blocks on your calendar within your working hours — concurrently, for speed — and if a deadline looks impossible, it drafts a heads-up message for you to review. You can give a goal an optional location to see a place label, commute time, and a route on its blocks. Review past runs anytime in Task History, with scoped undo.</p>
       </div>
     </div>
 
@@ -864,9 +864,11 @@
       <div class="tech-list">
         <div class="tech"><span class="tic">📅</span><div><b>Google Calendar API</b><span>The action surface — reads free/busy and books the focus blocks.</span></div></div>
         <div class="tech"><span class="tic">🤖</span><div><b>Gemini on Vertex AI</b><span>The reasoning engine — plans, prioritizes, and decides via function calling.</span></div></div>
-        <div class="tech"><span class="tic">🔥</span><div><b>Firestore</b><span>Durable source of truth for tasks, the plan ledger, and the action log.</span></div></div>
+        <div class="tech"><span class="tic">🔥</span><div><b>Firestore</b><span>Durable source of truth for tasks, task history, the plan ledger, and the action log.</span></div></div>
         <div class="tech"><span class="tic">☁️</span><div><b>Cloud Run</b><span>Hosts the FastAPI backend, scaling to zero between runs.</span></div></div>
         <div class="tech"><span class="tic">🔐</span><div><b>Google OAuth 2.0</b><span>Secure, minimal-scope access to your calendar — never to Gmail.</span></div></div>
+        <div class="tech"><span class="tic">🗺️</span><div><b>Google Maps Platform</b><span>Routes API for commute times, the Maps JavaScript API for the location pin picker, Geocoding for short place labels, and Places for the demo's real nearby venues.</span></div></div>
+        <div class="tech"><span class="tic">🎙️</span><div><b>Web Speech API</b><span>Dictate your goal by voice (best-effort), with a graceful fallback to typing.</span></div></div>
         <div class="tech"><span class="tic">↩️</span><div><b>Fully reversible</b><span>Kairos only touches blocks it created — one click resets everything.</span></div></div>
       </div>
     </div>

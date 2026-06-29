@@ -9,6 +9,8 @@
 > **Tooling revision (this version):** Two practicality-driven changes. (1) **Google Tasks dropped as a core dependency** — its date-only API forced a workaround and duplicated Calendar + Firestore; subtasks now live in **Firestore**. Mirroring into the real Google Tasks app is an optional stretch nicety. (2) **Auth committed to direct Google OAuth 2.0** (not Firebase Auth) because the agent must act on Calendar in the background (Cloud Scheduler), which needs durable server-side refresh tokens. Maps and voice remain wanted features, sequenced as stretch (see §8).
 >
 > **Build update (as implemented):** Gemini is accessed via **Vertex AI over Application Default Credentials** (project `project-2fa6ca07-83db-4010-9a4`; region via `VERTEX_LOCATION`, default `global`) — **not** an AI Studio API key — so usage bills the GCP project's credit. Models: `gemini-2.5-flash` primary, `gemini-2.5-flash-lite` fallback (retry-once-then-failover). Lane A actions execute with an action log, single **undo**, and bulk **undo-all** (clutch-marked events only). Deterministic **working-hours enforcement** (08:00–22:00 Asia/Kolkata, per-user prefs in Firestore) + max 2h block, hard per-run caps (**≤8 events — halts the run**; `AGENT_MAX_ACTIONS=20`, step cap 24), and subtask **due-date normalization** to (now, deadline] are all in place.
+>
+> **Post-MVP additions (this version):** persisted **task history** (Firestore in the live app; session-only in demo) with a list page (grouped by creation date, newest/oldest sort, goal search), per-task delete + clear-all (history-only; calendar blocks stay), and a task-detail view with scoped undo-all + per-block delete; **rescue drafts tied to their task** (shown in detail; a task's unconfirmed drafts clear when the task is deleted; approved drafts persist); a **reusable confirm modal** for all destructive actions; an **optional per-goal location** (interactive Google Maps pin picker with a current-location marker; blocks show a short place label + commute + a "See route" button) that is **display metadata only and never affects scheduling**; a **demo seed of professional events at real nearby venues** via the Places API (with a guaranteed fixed-Bhubaneswar fallback); **parallelized calendar inserts** (faster booking, reasoning unchanged); and a **responsive mobile layout**. New Google APIs used: **Maps JavaScript API** (picker), **Geocoding API** (short labels), **Places API (New)** (demo nearby). The server-side `MAPS_API_KEY` (Routes + Geocoding + Places) is never exposed; the picker uses a **separate referrer-restricted `MAPS_BROWSER_KEY`** and hides if it's unset.
 
 ---
 
@@ -68,8 +70,13 @@ Autonomy-first. Buildability = realism for an app on Cloud Run.
 | 4 | **Triage & prioritize** | Ranks open subtasks by deadline pressure + effort and **commits "what to do now."** | Agentic Depth, Product Experience | Gemini FC, Firestore | Easy–Medium |
 | 5 | **Draft-the-rescue-message** *(Lane B, confirm)* — **IMPLEMENTED** | When a deadline can't be met, **drafts a context-aware heads-up / extension message** and saves it for the user to **confirm / edit / dismiss**. Draft-only; never sent. | Innovation, Product Experience | Gemini generation (no Gmail-send scope) | **IMPLEMENTED** |
 | 6 | **Humane scheduling** — **IMPLEMENTED** | Spreads focus blocks across days with comfortable breaks when the deadline has runway; packs densely when it's tight. Fitting the work before the deadline always wins over break length. | Product Experience, Agentic Depth | Gemini loop (prompt-steered) | **IMPLEMENTED** |
-| 7 | **Demo / guest mode** — **IMPLEMENTED** | Real agent reasoning on a seeded in-memory sample calendar with no login (no OAuth/Firestore/real writes). Seeded week shows on entry; located events show commute times from a fixed Bhubaneswar origin. | Product Experience, Innovation | Gemini via Vertex AI (sandboxed) | **IMPLEMENTED** |
+| 7 | **Demo / guest mode** — **IMPLEMENTED** | Real agent reasoning on a seeded in-memory sample calendar with no login (no OAuth/Firestore/real writes). Seeded week shows professional events at **real venues near the viewer** (Places API) with commute from the viewer's location; the agent then adds focus blocks. Guaranteed fallback to a fixed Bhubaneswar professional seed if geolocation/Places/key is unavailable. | Product Experience, Innovation | Gemini via Vertex AI (sandboxed) + Places API | **IMPLEMENTED** |
 | 8 | **Main-page schedule preview** — **IMPLEMENTED** | Compact "Upcoming events" list (next 2–3) with a "View full schedule" link to the complete timeline. | Product Experience | — (frontend) | **IMPLEMENTED** |
+| 9 | **Task history** — **IMPLEMENTED** | Persists past runs (Firestore live; session-only in demo); list page grouped by creation date with newest/oldest sort + goal search; per-task delete + clear-all (history-only — calendar blocks stay); task-detail view of that run's blocks with scoped undo-all + per-block delete. Rescue drafts are tied to their task and shown in detail. | Product Experience, Completeness | Firestore | **IMPLEMENTED** |
+| 10 | **Optional goal location** — **IMPLEMENTED** | Optional per-goal location via an interactive Google Maps pin picker (with a current-location marker); located blocks show a short place label, commute from the captured creation origin, and a "See route" button. **Display metadata only — does not affect scheduling, subtasks, or caps.** | Product Experience, Innovation, Google Tech | Maps JavaScript API (picker) + Geocoding API (short label) + Routes API (commute) | **IMPLEMENTED** |
+| 11 | **Reusable confirm modal** — **IMPLEMENTED** | All destructive actions (undo-all, per-block dismiss, delete-task, clear-history) route through one confirm popup (Yes / No / × close; backdrop + Esc cancel). | Product Experience | — (frontend) | **IMPLEMENTED** |
+| 12 | **Parallelized calendar writes** — **IMPLEMENTED** | Focus-block inserts run concurrently for faster booking; agent reasoning and per-run caps unchanged. | Tech Implementation | Calendar API (`events.insert`, concurrent) | **IMPLEMENTED** |
+| 13 | **Responsive mobile layout** — **IMPLEMENTED** | UI adapts to phone widths — layouts stack, header/cards reflow, modals + map picker fit the viewport, no sideways scroll. | Product Experience | — (frontend/CSS) | **IMPLEMENTED** |
 | S1 | **Cloud Scheduler background cron** *(stretch — outstanding)* | Agent runs unattended (morning planning run) with no user click. | Agentic Depth, Innovation | Cloud Scheduler + Cloud Run | Medium |
 | S2 | **Voice goal/deadline capture** — **IMPLEMENTED** | Speak a goal (and deadline); transcribed into the goal field with best-effort natural-language deadline parsing; falls back to typing when unsupported. | Product Experience, Innovation | Web Speech API (browser, free) | **IMPLEMENTED** |
 | S3 | **Commute times to located events** — **IMPLEMENTED** | Shows live drive time from the user's location to each located event (most visible in demo, with seeded Bhubaneswar locations). Key is server-side only. | Innovation, Google Tech | Maps Routes API (`/commute`, server-side key) | **IMPLEMENTED** |
@@ -138,12 +145,15 @@ Autonomy-first. Buildability = realism for an app on Cloud Run.
 | **Google Calendar API** | `freebusy.query` to find open time; `events.insert` to book focus blocks; `events.patch` to rebook; `events.delete` for undo. The autonomous-action surface. | **IMPLEMENTED**; OAuth scopes `calendar.events` + `calendar.freebusy` |
 | **Cloud Run** | Hosts the app + agent loop. The GCP deploy target satisfying the requirement. | **CONFIRMED**; `gcloud run deploy` (skeleton deployed) |
 | **Firestore** | Source of truth: subtasks, action log, prefs, OAuth tokens (plan ledger + cursor planned). | **IMPLEMENTED**; provisioned + used directly (ADC) |
-| **Google Maps Routes API** | Live drive time from the user's location to located events, via a server-side `/commute` endpoint (the Maps key never reaches the browser). Most visible in demo mode with seeded Bhubaneswar locations + a fixed demo origin. | **IMPLEMENTED**; `MAPS_API_KEY` server-side only |
+| **Google Maps Routes API** | Live drive time from an origin to located events, via a server-side `/commute` endpoint (the key never reaches the browser). Powers commute on located goal blocks and on demo events. | **IMPLEMENTED**; `MAPS_API_KEY` server-side only |
+| **Google Maps JavaScript API** | Interactive pin picker for the optional goal location (drop/drag a destination pin; shows a current-location marker). | **IMPLEMENTED**; uses a **separate referrer-restricted `MAPS_BROWSER_KEY`** in the browser — never the server key; picker hides if unset |
+| **Google Geocoding API** | Reverse-geocodes a picked pin into a **short** place label (area/place name, not full address) for display. | **IMPLEMENTED**; server-side via `MAPS_API_KEY` |
+| **Google Places API (New)** | `places:searchNearby` to seed the demo with **real venues near the viewer** for realistic locations + commute. | **IMPLEMENTED**; server-side via `MAPS_API_KEY`; guaranteed fallback seed |
 | **Web Speech API** | Browser-side voice capture for goal/deadline dictation (best-effort NL deadline parsing), free, no key; graceful fallback to typing. | **IMPLEMENTED**; cross-browser uneven (best in Chrome, text fallback) |
 | **Cloud Scheduler** *(stretch — outstanding)* | Cron for unattended proactive runs (S1). | **CONFIRMED + buildable** by us |
 | **Google Tasks API** *(optional nicety, S4)* | One-way mirror of Firestore subtasks into the user's real Google Tasks app. | **CONFIRMED**; `due` date-only (fine for a mirror); extra scope `tasks` |
 
-This is a substantial, genuine Google footprint — Gemini + Calendar + Cloud Run + Firestore are all load-bearing, with Cloud Scheduler, Speech, Maps, and Tasks as real (not decorative) additions. The "Usage of Google Technologies" criterion rewards correct use over tool count; this set is chosen for genuine fit.
+This is a substantial, genuine Google footprint — Gemini + Calendar + Cloud Run + Firestore are all load-bearing, with the **Maps platform (Routes + JavaScript + Geocoding + Places)**, Web Speech, and (stretch) Cloud Scheduler and the optional Tasks mirror as real (not decorative) additions. The "Usage of Google Technologies" criterion rewards correct use over tool count; each is chosen for genuine fit.
 
 ---
 
@@ -153,10 +163,12 @@ This is a substantial, genuine Google footprint — Gemini + Calendar + Cloud Ru
 2. **Goal capture.** One input ("What needs to get done, and by when?") with a mic button (stretch S2). On submit → subtasks stream in → "Scheduled ✓".
 3. **The Save (conflict) view.** Before/after schedule diff with the agent's one-line reasoning and **Undo / Keep**.
 4. **Priority queue.** Ranked "what to do now" list, each item showing why (deadline + effort).
-5. **Confirm tray (Lane B).** Slide-up card for outbound drafts: **Confirm / Edit / Dismiss** (confirm marks approved only — never sends; no Gmail scope).
+5. **Confirm tray (Lane B).** Slide-up card for outbound drafts: **Confirm / Edit / Dismiss** (confirm marks approved only — never sends; no Gmail scope). A task's drafts also appear in its task-detail view.
 6. **Connect account / onboarding.** Google OAuth consent for Calendar.
+7. **Task History.** List of past runs grouped by creation date (newest/oldest sort, goal search), with per-task delete (×) and clear-all (history-only — calendar blocks stay), plus a **task-detail** page showing that run's focus blocks with scoped undo-all + per-block delete and the task's rescue drafts.
+8. **Goal location picker.** An optional interactive Google Maps modal (drop/drag a destination pin + a current-location marker) reachable from the command card; located blocks then show a short place label, commute, and a "See route" button.
 
-Visual tone: calm, single-accent, "the assistant already handled it" — receipts over alarms.
+Visual tone: calm, single-accent, "the assistant already handled it" — receipts over alarms. The whole UI is **responsive** down to phone widths, and destructive actions go through one **reusable confirm modal** (Yes / No / × close; backdrop + Esc cancel).
 
 ---
 
@@ -232,7 +244,7 @@ Self-scores are a sanity check, not an objective measure. The Tasks→Firestore 
 6. **Write path, Lane A:** `create_calendar_event`, `reschedule_event`, `upsert_task`, `reprioritize` — with action log + Undo. *(Done.)*
 7. **"The save":** detect collision/slip → autonomously rebook → surface before/after receipt; synchronous "Run agent now" trigger. *(Done.)*
 8. **Lane B:** `draft_message` (draft-only, no Gmail scope) + confirm tray. *(Done.)*
-9. **Done since:** humane scheduling, voice input (Web Speech), Maps commute times (Routes API), demo/guest mode, main-page schedule preview.
+9. **Done since:** humane scheduling, voice input (Web Speech), Maps commute times (Routes API), demo/guest mode, main-page schedule preview, **task history + task detail** (Firestore live / session demo), **rescue drafts tied to their task**, a **reusable confirm modal**, **optional per-goal location** (Maps JavaScript pin picker + Geocoding short labels + Routes commute + "See route"; display-only), **demo seed at real nearby venues** (Places API, with fallback), **parallelized calendar inserts**, and a **responsive mobile layout**.
 10. **Outstanding:** S1 Cloud Scheduler cron; S4 optional Tasks mirror.
 
 **Guardrails (mirror in CLAUDE.md):**
@@ -240,9 +252,10 @@ Self-scores are a sanity check, not an objective measure. The Tasks→Firestore 
 - Tasks are Firestore objects with real timestamps — no date-only constraint in the core.
 - Batch Firestore writes; don't write per tick.
 - Verify each Google API call against the real test account; don't assume API shapes — check docs.
+- **Maps keys are split:** the server-side `MAPS_API_KEY` (Routes + Geocoding + Places (New)) is **never** exposed to the browser; the pin picker uses a **separate referrer-restricted `MAPS_BROWSER_KEY`** (Maps JavaScript API) and the feature hides cleanly if it's unset. Goal location is display-only — it must never feed scheduling, subtasks, or caps.
 
 **Demo-day check:** the live "save" runs on the synchronous trigger without depending on the background cron. Inject a conflicting meeting → watch Kairos rebook → show receipt + Undo.
 
 ---
 
-*Tooling revised for practicality: Firestore replaces Google Tasks as the core store; direct OAuth 2.0 committed for background proactivity. Voice input and Maps commute times are now built (see §4/§6); the Cloud Scheduler cron is the one outstanding stretch item. Remaining open item is non-technical: secure the organizer's GCP-deploy clarification in writing before final submit.*
+*Tooling revised for practicality: Firestore replaces Google Tasks as the core store; direct OAuth 2.0 committed for background proactivity. Built since the MVP spine (see §4/§6): voice input, the Maps platform (commute + optional location pin picker + short-label geocoding + demo nearby venues), task history + task detail, task-tied rescue drafts, a reusable confirm modal, parallelized calendar writes, and a responsive mobile layout. The Cloud Scheduler cron is the one outstanding stretch item. Remaining open item is non-technical: secure the organizer's GCP-deploy clarification in writing before final submit.*

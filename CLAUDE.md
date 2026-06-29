@@ -37,8 +37,13 @@ tasks before deadlines (NOT passive reminders).
 - **Google Calendar API stays** — it is the product's action surface ("the
   save"). Highest-friction tool but irreplaceable; pay the OAuth cost.
 - Cloud Run, Firestore, Gemini, Cloud Scheduler all kept (load-bearing).
-- **Google Maps Routes API** added for commute times (server-side key); **Web
-  Speech API** (browser) added for voice input. Both are built.
+- **Google Maps platform** added (all built): **Routes API** (commute, server-side
+  key), **Geocoding API** (reverse-geocode picked pins to SHORT labels, server-side
+  key), **Places API (New)** (demo nearby venues, server-side key), and **Maps
+  JavaScript API** (goal-location pin picker, BROWSER key). The server-side
+  `MAPS_API_KEY` (Routes + Geocoding + Places) is NEVER exposed to the browser; the
+  picker uses a SEPARATE referrer-restricted `MAPS_BROWSER_KEY` and hides if unset.
+  **Web Speech API** (browser) added for voice input.
 
 ## Implemented so far
 - Cloud Run deploy path proven.
@@ -57,7 +62,9 @@ tasks before deadlines (NOT passive reminders).
   to a Firestore `drafts` subcollection, and exposes `GET /agent/drafts` +
   `POST /agent/draft/{id}/confirm|edit|dismiss`. Confirm only MARKS it approved
   (`sent=false`); edit reopens to `proposed`; dismiss marks dismissed. There is
-  NO send capability and NO Gmail scope — by design.
+  NO send capability and NO Gmail scope — by design. Drafts are tied to their task
+  (captured with the history entry, shown in task detail); deleting a task clears
+  its UNCONFIRMED drafts from the main area; APPROVED drafts persist.
 - Action log + single undo (`/agent/undo`, `/agent/undo/{id}`), per-block dismiss
   (`/agent/undo-event/{id}`), and bulk `/agent/undo-all` (delete ONLY
   `clutch`-marked events — never the user's own).
@@ -75,12 +82,33 @@ tasks before deadlines (NOT passive reminders).
   the user's location to a located event; the Maps key is server-side only and
   never reaches the browser. Travel time renders inline on located events.
 - Demo / guest mode (parallel path; live agent untouched): real agent reasoning on
-  a seeded in-memory sample calendar, no OAuth/Firestore/real writes. The seeded
-  week shows on entry; commute uses a FIXED Bhubaneswar origin with seeded
-  Bhubaneswar locations. `GET /agent/demo/seed`, `POST /agent/demo/run`.
+  a seeded in-memory sample calendar, no OAuth/Firestore/real writes. Seed events are
+  PROFESSIONAL (meetings/calls/reviews) placed at REAL venues near the viewer via the
+  Places API, with commute from the viewer's location. GUARANTEED FALLBACK to a fixed
+  Bhubaneswar professional seed + fixed origin if geolocation/Places/key is missing —
+  the demo always populates, never errors. `GET /agent/demo/seed` (optional viewer
+  `lat`/`lng`), `POST /agent/demo/run` (optional `viewer_lat`/`viewer_lng`).
 - Main-page schedule preview: a compact "Upcoming events" list (next 2–3 events)
   with a "View full schedule" link to the complete timeline; works in both the
   real app and demo.
+- Task history: persisted (Firestore `task_history` subcollection in real mode;
+  in-memory session-only in demo). List page grouped by creation date, newest/oldest
+  sort + goal search; per-task delete (×) and clear-all (history-only — calendar
+  blocks STAY); task-detail page with scoped undo-all + per-block delete.
+- Reusable confirm modal: undo-all, per-block dismiss, delete-task, and clear-history
+  all route through one confirm popup (Yes / No / × close; backdrop + Esc cancel) —
+  no inline confirmations.
+- Optional per-goal location (additive; DISPLAY METADATA ONLY — never affects
+  scheduling, subtasks, caps, working hours, or the clutch/undo logic): interactive
+  Maps JavaScript pin picker (with a current-location marker), reverse-geocoded SHORT
+  label (Geocoding API), commute from the origin captured at goal-creation (Routes
+  API), and a keyless "See route" Google Maps directions link. Stamped on created
+  events via `clutch_loc_*`/`clutch_origin_*` private props. Endpoints `GET
+  /maps/config`, `POST /geocode/reverse`. No location ⇒ exactly the prior behavior.
+- Parallelized calendar inserts: focus-block `events.insert` run concurrently for
+  faster booking; agent reasoning, ordering, and per-run caps unchanged.
+- Responsive mobile layout (CSS-only): stacks layouts, reflows header/cards, fits
+  modals + map picker to the viewport, no horizontal overflow. No JS/logic changes.
 - Known imperfection: block sizing is effort-PROMPT-steered, not deterministically
   minute-accounted; the hard guarantee is the ≤8-events/run cap.
 
