@@ -150,6 +150,12 @@ VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "global")
 # the rest of the app is unaffected.
 MAPS_API_KEY = os.environ.get("MAPS_API_KEY")
 ROUTES_ENDPOINT = "https://routes.googleapis.com/directions/v2:computeRoutes"
+GEOCODE_ENDPOINT = "https://maps.googleapis.com/maps/api/geocode/json"
+# SEPARATE, browser-restricted Maps key for the interactive location-picker map
+# (Maps JavaScript API). This one is MEANT to be sent to the browser (HTTP-referrer
+# restricted in the console). The server-side MAPS_API_KEY (Routes + Geocoding) is
+# NEVER exposed. If unset, the picker is simply unavailable (feature degrades).
+MAPS_BROWSER_KEY = os.environ.get("MAPS_BROWSER_KEY")
 # A granular plan costs many writes: break_down_task (~1) + ~2 calls/subtask
 # (create_calendar_event + upsert_task), often one call per turn. A 12h goal
 # (~7 subtasks + ~6 blocks) needs ~15+ actions, so the budget must comfortably
@@ -357,11 +363,27 @@ def _list_events(
         }
         # Location is carried ONLY for UI timelines (include_location=True); the
         # agent's perception snapshot uses the default and is unchanged.
-        if include_location and e.get("location"):
-            item["location"] = e["location"]
-            geo = e.get("geo")
-            if geo:
-                item["geo"] = geo
+        if include_location:
+            priv = (e.get("extendedProperties", {}) or {}).get("private", {}) or {}
+            label = e.get("location") or priv.get("clutch_loc_label")
+            if label:
+                item["location"] = label
+            # Coords: prefer the clutch-stamped pin (real focus blocks), else a
+            # `geo` field (demo seed events). Origin = captured creation origin.
+            lat, lng = priv.get("clutch_loc_lat"), priv.get("clutch_loc_lng")
+            if lat is not None and lng is not None:
+                try:
+                    item["geo"] = {"lat": float(lat), "lng": float(lng)}
+                except (TypeError, ValueError):
+                    pass
+            elif e.get("geo"):
+                item["geo"] = e["geo"]
+            olat, olng = priv.get("clutch_origin_lat"), priv.get("clutch_origin_lng")
+            if olat is not None and olng is not None:
+                try:
+                    item["origin"] = {"lat": float(olat), "lng": float(olng)}
+                except (TypeError, ValueError):
+                    pass
         out.append(item)
     return out
 
@@ -1038,7 +1060,11 @@ def _format_block_title(raw_title: str, goal: str | None) -> str:
     return f"{subtask} ({g})"
 
 
-def _cal_create(session, title, start, end, description=None, goal=None) -> dict:
+def _cal_create(session, title, start, end, description=None, goal=None,
+                location=None, origin=None) -> dict:
+    """Create an agent focus block. `location`/`origin` are OPTIONAL display-only
+    metadata (a goal's pinned place + the origin captured at creation): they are
+    stamped onto the event for the UI but do NOT influence scheduling at all."""
     note = "🤖 Created by Clutch (agent focus block)."
     private = {CLUTCH_MARKER: "1", "clutch_action": "focus_block"}
     if goal:
@@ -1052,6 +1078,18 @@ def _cal_create(session, title, start, end, description=None, goal=None) -> dict
         # Tag so undo/UI can tell agent events from the user's own.
         "extendedProperties": {"private": private},
     }
+    # Optional location metadata (display only). extendedProperties.private values
+    # must be strings, so coords are stored as strings and parsed back in _list_events.
+    if location and location.get("lat") is not None and location.get("lng") is not None:
+        label = (location.get("label") or "").strip()
+        if label:
+            body["location"] = label[:300]   # also surfaces in the Google Calendar UI
+            private["clutch_loc_label"] = label[:300]
+        private["clutch_loc_lat"] = str(location["lat"])
+        private["clutch_loc_lng"] = str(location["lng"])
+        if origin and origin.get("lat") is not None and origin.get("lng") is not None:
+            private["clutch_origin_lat"] = str(origin["lat"])
+            private["clutch_origin_lng"] = str(origin["lng"])
     resp = session.post(f"{CALENDAR_BASE}/calendars/primary/events", json=body)
     if resp.status_code not in (200, 201):
         raise HTTPException(502, f"events.insert failed ({resp.status_code}): {resp.text}")
@@ -1130,14 +1168,24 @@ def _blocks_from_actions(executed_actions: list[dict]) -> list[dict]:
         r = rec.get("result") or {}
         if not r.get("event_id"):
             continue
-        blocks.append({
+        block = {
             "event_id": r.get("event_id"),
             "title": r.get("title"),
             "goal": r.get("goal"),
             "start": r.get("start"),
             "end": r.get("end"),
             "htmlLink": r.get("htmlLink"),
-        })
+        }
+        # Optional location metadata (display only) so Task History detail can
+        # show the label, commute, and See-route link.
+        if r.get("loc_lat") is not None and r.get("loc_lng") is not None:
+            block["location"] = r.get("location")
+            block["loc_lat"] = r.get("loc_lat")
+            block["loc_lng"] = r.get("loc_lng")
+            if r.get("origin_lat") is not None and r.get("origin_lng") is not None:
+                block["origin_lat"] = r.get("origin_lat")
+                block["origin_lng"] = r.get("origin_lng")
+        blocks.append(block)
     return blocks
 
 
@@ -1429,8 +1477,14 @@ def enforce_working_hours(start_iso: str, end_iso: str, prefs: dict) -> tuple[st
     return new_s.isoformat(), new_e.isoformat(), note
 
 
-def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=None, run_goal=None) -> tuple[dict, dict]:
-    """Execute one Lane A tool + write an action_log entry. Returns (result, record)."""
+def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=None,
+                   run_goal=None, run_location=None, run_origin=None) -> tuple[dict, dict]:
+    """Execute one Lane A tool + write an action_log entry. Returns (result, record).
+
+    `run_location`/`run_origin` are OPTIONAL display-only metadata for the goal's
+    pinned place + the origin captured at creation; they are stamped onto created
+    blocks for the UI and do NOT affect scheduling, titles, or working hours.
+    """
     tasks_coll = db().collection(USERS).document(sub).collection(TASKS)
 
     if name == "create_calendar_event":
@@ -1441,6 +1495,7 @@ def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=N
         title = _format_block_title(args.get("title", "Focus block"), block_goal)
         ev = _cal_create(
             session, title, start, end, args.get("description"), goal=block_goal,
+            location=run_location, origin=run_origin,
         )
         result = {
             "event_id": ev.get("id"),
@@ -1451,6 +1506,15 @@ def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=N
             "end": end,
             "adjusted": adjusted,
         }
+        # Carry the (optional) location metadata into the result so Task History
+        # blocks can show the label, commute, and See-route link too.
+        if run_location and run_location.get("lat") is not None and run_location.get("lng") is not None:
+            result["location"] = (run_location.get("label") or "").strip() or None
+            result["loc_lat"] = run_location["lat"]
+            result["loc_lng"] = run_location["lng"]
+            if run_origin and run_origin.get("lat") is not None and run_origin.get("lng") is not None:
+                result["origin_lat"] = run_origin["lat"]
+                result["origin_lng"] = run_origin["lng"]
         undo = {"type": "delete_event", "event_id": ev.get("id")}
 
     elif name == "reschedule_event":
@@ -1544,12 +1608,18 @@ def execute_lane_a(sub, data, session, client, name, args, prefs, run_deadline=N
     return result, record
 
 
-def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hours: int) -> dict:
+def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hours: int,
+              location: dict | None = None, origin: dict | None = None) -> dict:
     """Agent loop: perceive -> pre-rank -> plan with Gemini, EXECUTING Lane A.
 
     Lane A (calendar/Firestore writes) is executed and logged for undo. Lane B
     (draft_message) is captured as a proposal only. notify_user just surfaces a
     message. Hard-capped by step count and total actions.
+
+    `location`/`origin` are OPTIONAL display-only metadata (a goal's pinned place
+    + the origin captured at creation). They are NOT added to the prompt, the
+    snapshot, or the ranking, so they cannot influence scheduling, subtask
+    breakdown, caps, or working hours — they are only stamped onto created blocks.
     """
     client = _gemini_client()
     config = types.GenerateContentConfig(
@@ -1728,6 +1798,7 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
                 result, record = execute_lane_a(
                     sub, data, session, client, "create_calendar_event", c_args, prefs,
                     run_deadline=deadline, run_goal=goal,
+                    run_location=location, run_origin=origin,
                 )
                 return idx, {"status": "executed", **result}, record
             except Exception as e:  # feed the error back so the model can adapt
@@ -1851,24 +1922,49 @@ def agent_plan(body: PlanRequest, request: Request):
     return run_agent(sub, data, body.goal, body.deadline, body.hours)
 
 
+def _location_from_params(loc_lat, loc_lng, loc_label, origin_lat, origin_lng):
+    """Build the optional (location, origin) metadata dicts from request params.
+
+    Returns (None, None) when no pin was set — so a goal without a location runs
+    exactly as before. Origin is only meaningful alongside a location.
+    """
+    location = origin = None
+    if loc_lat is not None and loc_lng is not None:
+        location = {"lat": loc_lat, "lng": loc_lng, "label": loc_label}
+        if origin_lat is not None and origin_lng is not None:
+            origin = {"lat": origin_lat, "lng": origin_lng}
+    return location, origin
+
+
 @app.get("/agent/run")
 def agent_run(
     request: Request,
     hours: int = 48,
     goal: str | None = None,
     deadline: str | None = None,
+    loc_lat: float | None = None,
+    loc_lng: float | None = None,
+    loc_label: str | None = None,
+    origin_lat: float | None = None,
+    origin_lng: float | None = None,
 ):
     """Review the schedule (optionally for a goal) and ACT (Lane A executed).
 
     Pass `deadline` as ISO 8601 (e.g. 2026-06-27T18:00:00+05:30) so subtask due
     dates are bounded by a real deadline. Recommended whenever `goal` is set.
+
+    `loc_lat`/`loc_lng`/`loc_label` (the goal's optional pinned location) and
+    `origin_lat`/`origin_lng` (the origin captured at creation) are OPTIONAL,
+    display-only metadata stamped onto created blocks; they do NOT affect
+    scheduling. Omit them for the current (no-location) behavior.
     """
     if hours < 1 or hours > 24 * 30:
         raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
     if goal and not deadline:
         logger.warning("agent_run called with a goal but no deadline; dues will be paced, not bounded.")
     sub, data = _require_user(request)
-    return run_agent(sub, data, goal, deadline, hours)
+    location, origin = _location_from_params(loc_lat, loc_lng, loc_label, origin_lat, origin_lng)
+    return run_agent(sub, data, goal, deadline, hours, location=location, origin=origin)
 
 
 # --- Demo / guest mode (no OAuth, no Firestore, no real calendar writes) ------
@@ -2037,12 +2133,14 @@ class DemoSession:
         return _DemoResponse(204, {})
 
 
-def _demo_execute(state: dict, client, name, args, prefs, run_deadline=None, run_goal=None) -> dict:
+def _demo_execute(state: dict, client, name, args, prefs, run_deadline=None, run_goal=None,
+                  run_location=None, run_origin=None) -> dict:
     """In-memory mirror of execute_lane_a's tool dispatch for demo mode.
 
     REUSES the same reasoning helpers (enforce_working_hours, _format_block_title,
     _cal_create against the DemoSession, decompose_goal, _normalize_due) — only the
     persistence is in-memory instead of Firestore. Returns the result payload.
+    `run_location`/`run_origin` are optional display-only metadata (see _cal_create).
     """
     session = state["session"]
 
@@ -2050,9 +2148,18 @@ def _demo_execute(state: dict, client, name, args, prefs, run_deadline=None, run
         start, end, adjusted = enforce_working_hours(args["start"], args["end"], prefs)
         block_goal = args.get("goal") or run_goal
         title = _format_block_title(args.get("title", "Focus block"), block_goal)
-        ev = _cal_create(session, title, start, end, args.get("description"), goal=block_goal)
-        return {"event_id": ev.get("id"), "htmlLink": ev.get("htmlLink"), "title": title,
-                "goal": block_goal, "start": start, "end": end, "adjusted": adjusted}
+        ev = _cal_create(session, title, start, end, args.get("description"), goal=block_goal,
+                         location=run_location, origin=run_origin)
+        result = {"event_id": ev.get("id"), "htmlLink": ev.get("htmlLink"), "title": title,
+                  "goal": block_goal, "start": start, "end": end, "adjusted": adjusted}
+        if run_location and run_location.get("lat") is not None and run_location.get("lng") is not None:
+            result["location"] = (run_location.get("label") or "").strip() or None
+            result["loc_lat"] = run_location["lat"]
+            result["loc_lng"] = run_location["lng"]
+            if run_origin and run_origin.get("lat") is not None and run_origin.get("lng") is not None:
+                result["origin_lat"] = run_origin["lat"]
+                result["origin_lng"] = run_origin["lng"]
+        return result
 
     if name == "reschedule_event":
         prev = _cal_get(session, args["event_id"])
@@ -2094,9 +2201,11 @@ def _demo_execute(state: dict, client, name, args, prefs, run_deadline=None, run
     raise HTTPException(500, f"Unhandled demo Lane A tool: {name}")
 
 
-def run_agent_demo(goal: str | None, deadline: str | None, hours: int) -> dict:
+def run_agent_demo(goal: str | None, deadline: str | None, hours: int,
+                   location: dict | None = None, origin: dict | None = None) -> dict:
     """Parallel agent loop for demo mode. Same orchestration + the SAME reasoning
-    primitives as run_agent, but reads the seeded calendar and writes in-memory."""
+    primitives as run_agent, but reads the seeded calendar and writes in-memory.
+    `location`/`origin` are optional display-only metadata (never sent to Gemini)."""
     client = _gemini_client()
     config = types.GenerateContentConfig(
         tools=[types.Tool(function_declarations=FUNCTION_DECLARATIONS)],
@@ -2200,7 +2309,8 @@ def run_agent_demo(goal: str | None, deadline: str | None, hours: int) -> dict:
                 else:
                     try:
                         result = _demo_execute(state, client, name, args, prefs,
-                                               run_deadline=deadline, run_goal=goal)
+                                               run_deadline=deadline, run_goal=goal,
+                                               run_location=location, run_origin=origin)
                         executed_actions.append({"name": name, "args": args, "result": result})
                         events_created += 1
                         payload = {"status": "executed", **result}
@@ -2299,6 +2409,11 @@ class DemoRunRequest(BaseModel):
     goal: str | None = None
     deadline: str | None = None
     hours: int = 72
+    loc_lat: float | None = None
+    loc_lng: float | None = None
+    loc_label: str | None = None
+    origin_lat: float | None = None
+    origin_lng: float | None = None
 
 
 @app.post("/agent/demo/run")
@@ -2306,10 +2421,14 @@ def agent_demo_run(body: DemoRunRequest):
     """GUEST/DEMO mode: run the REAL agent reasoning against a seeded in-memory
     calendar. No OAuth, no Firestore user, no real calendar writes. Gemini still
     runs via Vertex (project credit). Returns the same shape as /agent/run plus a
-    pre-built `timeline`. Live login/calendar/write paths are untouched."""
+    pre-built `timeline`. Live login/calendar/write paths are untouched.
+
+    Optional goal location/origin are display-only metadata (same as /agent/run)."""
     if body.hours < 1 or body.hours > 24 * 30:
         raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
-    return run_agent_demo(body.goal, body.deadline, body.hours)
+    location, origin = _location_from_params(
+        body.loc_lat, body.loc_lng, body.loc_label, body.origin_lat, body.origin_lng)
+    return run_agent_demo(body.goal, body.deadline, body.hours, location=location, origin=origin)
 
 
 @app.get("/agent/demo/seed")
@@ -2407,6 +2526,70 @@ def commute(body: CommuteRequest):
         }
     except Exception as e:  # network/timeout/parse — fail soft, never leak the key
         logger.warning("Routes API call failed: %s", type(e).__name__)  # type only; no key/body
+        return {"available": False}
+
+
+# --- Maps config + reverse geocoding (for the optional goal location picker) ---
+
+
+@app.get("/maps/config")
+def maps_config():
+    """Expose ONLY the browser-restricted Maps JS key for the interactive location
+    picker. That key is MEANT to be public (HTTP-referrer restricted in the
+    console). The server-side Routes/Geocoding key (MAPS_API_KEY) is NEVER
+    returned to the browser. If no browser key is configured, the picker is simply
+    unavailable and the rest of the app is unaffected."""
+    return {"picker_available": bool(MAPS_BROWSER_KEY), "browser_key": MAPS_BROWSER_KEY}
+
+
+def _short_place_label(payload: dict) -> str | None:
+    """Reduce a Geocoding API response to a SHORT label (place/area, not the full
+    address): prefer a POI/neighborhood/locality component, else the first segment
+    of the formatted address."""
+    results = payload.get("results") or []
+    if not results:
+        return None
+    top = results[0]
+    comps = top.get("address_components") or []
+    preferred = ["point_of_interest", "premise", "neighborhood", "sublocality",
+                 "sublocality_level_1", "locality", "administrative_area_level_2"]
+    for want in preferred:
+        for c in comps:
+            if want in (c.get("types") or []) and c.get("long_name"):
+                return c["long_name"]
+    fa = top.get("formatted_address")
+    return fa.split(",")[0].strip() if fa else None
+
+
+class ReverseGeocodeRequest(BaseModel):
+    lat: float
+    lng: float
+
+
+@app.post("/geocode/reverse")
+def geocode_reverse(body: ReverseGeocodeRequest):
+    """Reverse-geocode a pinned lat/lng to a SHORT place label, using the
+    server-side MAPS_API_KEY (Geocoding API). The key is sent only in the
+    server->Google request and is NEVER returned to the browser or logged.
+    Degrades to {"available": false} on any problem (the UI then falls back to
+    showing coordinates), so it never errors."""
+    if not MAPS_API_KEY:
+        return {"available": False}
+    try:
+        resp = requests.get(
+            GEOCODE_ENDPOINT,
+            params={"latlng": f"{body.lat},{body.lng}", "key": MAPS_API_KEY},
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            logger.warning("Geocoding API returned %s", resp.status_code)  # status only
+            return {"available": False}
+        label = _short_place_label(resp.json())
+        if not label:
+            return {"available": False}
+        return {"available": True, "label": label}
+    except Exception as e:  # network/timeout/parse — fail soft, never leak the key
+        logger.warning("Geocoding API call failed: %s", type(e).__name__)  # type only
         return {"available": False}
 
 

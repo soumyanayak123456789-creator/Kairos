@@ -594,6 +594,38 @@
   .detail-meta-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .detail-meta-row .dm-deadline { font-size: 13px; color: var(--text-faint); }
 
+  /* ============ Optional goal location picker ============ */
+  .loc-control { display: flex; align-items: center; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .loc-chip {
+    display: inline-flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600;
+    color: var(--accent-ink); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    padding: 6px 12px; border-radius: 999px;
+  }
+  .loc-chip button {
+    background: none; border: none; color: inherit; cursor: pointer; font-size: 13px;
+    line-height: 1; padding: 0; opacity: .8;
+  }
+  .loc-chip button:hover { opacity: 1; }
+  .modal.loc-modal { max-width: 660px; }
+  #loc-map {
+    width: 100%; height: 360px; border-radius: var(--radius-sm);
+    background: var(--surface-2); border: 1px solid var(--border);
+  }
+  .loc-chosen { font-size: 13px; color: var(--text-dim); margin: 10px 0 0; min-height: 1.2em; }
+  /* "See route" — a clear, tappable button on located blocks (timeline + history detail) */
+  .ev-route {
+    display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
+    margin-left: 8px; padding: 5px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; line-height: 1; white-space: nowrap;
+    color: #fff; background: var(--accent); text-decoration: none;
+    border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow: 0 2px 8px -3px color-mix(in srgb, var(--accent) 70%, transparent);
+    transition: background .15s ease, transform .08s ease, box-shadow .2s ease;
+  }
+  .ev-route:hover { background: var(--accent-ink); text-decoration: none; transform: translateY(-1px); }
+  .ev-route:active { transform: translateY(0); }
+
   /* ============ Connect gate ============ */
   .gate { text-align: center; padding: 50px 22px; }
   .gate .gico { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 16px; background: var(--accent-soft); display: grid; place-items: center; color: var(--accent-ink); }
@@ -839,6 +871,11 @@
           <input class="input" id="deadline" type="datetime-local" />
         </div>
       </div>
+      <!-- Optional goal location (shown only when a browser Maps key is configured) -->
+      <div class="loc-control" id="loc-control" hidden>
+        <button class="btn ghost sm" id="set-location" type="button">📍 Set location (optional)</button>
+        <span class="loc-chip" id="loc-chip" hidden></span>
+      </div>
       <div class="run-row">
         <button class="btn" id="run">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -996,6 +1033,21 @@
     <div class="modal-actions">
       <button class="btn" id="demo-about">See full details</button>
       <button class="btn ghost" id="demo-done">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Optional goal location picker (interactive Google Map; browser-restricted key) -->
+<div class="modal-backdrop" id="loc-modal" hidden>
+  <div class="modal loc-modal" role="dialog" aria-modal="true" aria-labelledby="loc-title">
+    <button class="modal-close" id="loc-close" aria-label="Close without choosing">✕</button>
+    <h2 id="loc-title">Set goal location</h2>
+    <p class="muted" style="margin:0 0 12px">Click the map to drop a pin (or drag it). Optional — used only to show this goal's commute &amp; route on its blocks; it does not change scheduling.</p>
+    <div id="loc-map"></div>
+    <p class="loc-chosen" id="loc-chosen"></p>
+    <div class="modal-actions">
+      <button class="btn" id="loc-confirm" disabled>Use this location</button>
+      <button class="btn ghost" id="loc-cancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -1411,12 +1463,25 @@ async function runKairos() {
   showWorking();
   try {
     let result;
+    // Optional location (metadata/display only — never affects scheduling).
+    // When a goal location is pinned, also capture the device origin at creation
+    // time so blocks can show commute + a See-route link. Origin is best-effort:
+    // if geolocation is denied/unavailable we still run, just without a route.
+    let _origin = null;
+    if (GOAL_LOC) _origin = await getUserLocation();
     if (DEMO.active) {
       // Demo: same agent reasoning server-side, seeded calendar, no real writes.
+      const body = { goal, deadline: deadline || null, hours };
+      if (GOAL_LOC) {
+        body.loc_lat = GOAL_LOC.lat;
+        body.loc_lng = GOAL_LOC.lng;
+        if (GOAL_LOC.label) body.loc_label = GOAL_LOC.label;
+        if (_origin) { body.origin_lat = _origin.lat; body.origin_lng = _origin.lng; }
+      }
       result = await api("/agent/demo/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, deadline: deadline || null, hours }),
+        body: JSON.stringify(body),
       });
       DEMO.timeline = result.timeline || [];
       const _entry = demoHistoryEntry(result);          // tags this run's drafts with the entry id
@@ -1425,6 +1490,12 @@ async function runKairos() {
     } else {
       const p = new URLSearchParams({ hours: String(hours), goal });
       if (deadline) p.set("deadline", deadline);
+      if (GOAL_LOC) {
+        p.set("loc_lat", String(GOAL_LOC.lat));
+        p.set("loc_lng", String(GOAL_LOC.lng));
+        if (GOAL_LOC.label) p.set("loc_label", GOAL_LOC.label);
+        if (_origin) { p.set("origin_lat", String(_origin.lat)); p.set("origin_lng", String(_origin.lng)); }
+      }
       result = await api("/agent/run?" + p.toString());
     }
     finishWorking();
@@ -1766,6 +1837,30 @@ function renderRetry(goal, deadline) {
   };
 }
 
+// Shared location line for an event/block: place label + (async) commute slot +
+// optional "See route" link. Reused by the timeline, the preview, and the task
+// detail page so located blocks render identically everywhere. Events without a
+// location return "" (unchanged behavior). `ev.geo` = destination coords,
+// `ev.origin` = the origin captured at creation (when present).
+function evLocHTML(ev) {
+  const geo = ev.geo || {};
+  const hasGeo = geo.lat != null && geo.lng != null;
+  if (!ev.location && !hasGeo) return "";
+  const origin = ev.origin || null;
+  const hasOrigin = origin && origin.lat != null && origin.lng != null;
+  const label = ev.location || "Pinned location";
+  let attrs = "";
+  if (hasGeo) attrs += ` data-dlat="${esc(geo.lat)}" data-dlng="${esc(geo.lng)}"`;
+  if (hasOrigin) attrs += ` data-olat="${esc(origin.lat)}" data-olng="${esc(origin.lng)}"`;
+  let route = "";
+  if (hasGeo && hasOrigin) {
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin.lat + "," + origin.lng)}&destination=${encodeURIComponent(geo.lat + "," + geo.lng)}`;
+    route = `<a class="ev-route" href="${esc(url)}" target="_blank" rel="noopener noreferrer">See route ↗</a>`;
+  }
+  return `<div class="ev-loc">📍 ${esc(label)}` +
+    `<span class="ev-commute" data-daddr="${esc(ev.location || "")}"${attrs}></span>${route}</div>`;
+}
+
 // ---------- timeline ----------
 async function loadTimeline(runResult) {
   // Demo mode renders from the in-memory demo run — no fetch, no /ui/timeline.
@@ -1862,16 +1957,10 @@ function renderTimeline(events, runResult) {
           titleCell = `<div class="title">${esc(chunk ? chunk.base : titleText)}</div>${goalLabel}`;
         }
 
-        // Located events get a place line + an (initially empty) commute slot that
-        // hydrateCommutes() fills in asynchronously. Events with no location show
-        // nothing extra. Focus blocks have no location, so they never get this.
-        if (ev.location) {
-          const geo = ev.geo || {};
-          const coordAttrs = (geo.lat != null && geo.lng != null)
-            ? ` data-dlat="${esc(geo.lat)}" data-dlng="${esc(geo.lng)}"` : "";
-          titleCell += `<div class="ev-loc">📍 ${esc(ev.location)}` +
-            `<span class="ev-commute" data-daddr="${esc(ev.location)}"${coordAttrs}></span></div>`;
-        }
+        // Located events/blocks get a place line + an (initially empty) commute
+        // slot that hydrateCommutes() fills asynchronously, plus a See-route link
+        // when an origin was captured. Events with no location render nothing extra.
+        titleCell += evLocHTML(ev);
 
         const actions = kairos
           ? `<span class="badge">KAIROS</span>
@@ -1908,14 +1997,7 @@ function previewRowHTML(ev) {
   }
   const chunk = kairos ? parseChunk(titleText) : null;
   if (chunk) titleText = chunk.base;
-  let locCell = "";
-  if (ev.location) {
-    const geo = ev.geo || {};
-    const coordAttrs = (geo.lat != null && geo.lng != null)
-      ? ` data-dlat="${esc(geo.lat)}" data-dlng="${esc(geo.lng)}"` : "";
-    locCell = `<div class="ev-loc">📍 ${esc(ev.location)}` +
-      `<span class="ev-commute" data-daddr="${esc(ev.location)}"${coordAttrs}></span></div>`;
-  }
+  const locCell = evLocHTML(ev);
   const badge = kairos ? `<span class="badge">KAIROS</span>` : `<span class="badge">Your event</span>`;
   return `<div class="ev ${kairos ? "kairos" : "user"}">
       <div class="time">${time}</div>
@@ -1980,13 +2062,19 @@ function getUserLocation() {
 async function hydrateCommutes(scope) {
   const spans = scope.querySelectorAll(".ev-commute");
   if (!spans.length) return;
-  // Demo mode uses a FIXED Bhubaneswar origin (no GPS prompt) so commute times are
-  // realistic and consistent for any judge; the live app uses the real location.
-  const origin = DEMO.active
-    ? (DEMO.origin && { lat: DEMO.origin.lat, lng: DEMO.origin.lng })
-    : await getUserLocation();
-  if (!origin) return;                           // no permission/support → omit
+  // A block can carry its OWN captured origin (data-olat/olng) — that wins. For
+  // spans without one we fall back to a shared origin: demo's FIXED Bhubaneswar
+  // point (no GPS prompt) or the live app's real device location. Only fetch the
+  // shared origin if at least one span actually needs it (avoids a needless prompt).
+  const needShared = Array.from(spans).some((s) => !(s.dataset.olat && s.dataset.olng));
+  const sharedOrigin = !needShared ? null
+    : (DEMO.active ? (DEMO.origin && { lat: DEMO.origin.lat, lng: DEMO.origin.lng })
+                   : await getUserLocation());
   spans.forEach(async (span) => {
+    const origin = (span.dataset.olat && span.dataset.olng)
+      ? { lat: +span.dataset.olat, lng: +span.dataset.olng }
+      : sharedOrigin;
+    if (!origin) return;                         // no per-block + no shared origin → omit
     const body = { origin_lat: origin.lat, origin_lng: origin.lng };
     if (span.dataset.dlat && span.dataset.dlng) {
       body.dest_lat = +span.dataset.dlat; body.dest_lng = +span.dataset.dlng;
@@ -2006,6 +2094,148 @@ async function hydrateCommutes(scope) {
     } catch (_) { /* silent: just omit the commute time */ }
   });
 }
+
+// ---------- optional goal location picker (Google Maps JS; browser key) ----------
+// Fully optional + additive: only shown when a SEPARATE browser-restricted Maps key
+// is configured server-side (/maps/config). The server-side Routes/Geocoding key is
+// never exposed here. No pin => no params sent => current (no-location) behavior.
+const MAPS = { available: false, browserKey: null, _loadPromise: null };
+let GOAL_LOC = null;                 // {lat, lng, label} for the next run, or null
+let _locMap = null, _locMarker = null, _locPick = null, _locYouMarker = null;
+
+async function initMapsConfig() {
+  try {
+    const cfg = await api("/maps/config");
+    MAPS.available = !!cfg.picker_available;
+    MAPS.browserKey = cfg.browser_key || null;
+  } catch { MAPS.available = false; }
+  const ctrl = el("loc-control");
+  if (ctrl) ctrl.hidden = !MAPS.available;   // hide the control entirely if no key
+}
+
+function loadMapsJs() {
+  if (window.google && window.google.maps) return Promise.resolve();
+  if (MAPS._loadPromise) return MAPS._loadPromise;
+  MAPS._loadPromise = new Promise((resolve, reject) => {
+    if (!MAPS.browserKey) { reject(new Error("Maps picker not configured")); return; }
+    const s = document.createElement("script");
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(MAPS.browserKey)}&loading=async`;
+    s.async = true; s.defer = true;
+    s.onload = () => resolve();
+    s.onerror = () => { MAPS._loadPromise = null; reject(new Error("Maps JS failed to load")); };
+    document.head.appendChild(s);
+  });
+  return MAPS._loadPromise;
+}
+
+function renderLocChip() {
+  const chip = el("loc-chip"), setBtn = el("set-location");
+  if (!chip) return;
+  if (GOAL_LOC) {
+    const label = GOAL_LOC.label || `${GOAL_LOC.lat.toFixed(4)}, ${GOAL_LOC.lng.toFixed(4)}`;
+    chip.hidden = false;
+    chip.innerHTML = `📍 ${esc(label)} <button type="button" id="loc-clear" title="Clear location" aria-label="Clear location">✕</button>`;
+    el("loc-clear").onclick = (e) => { e.stopPropagation(); GOAL_LOC = null; renderLocChip(); };
+    if (setBtn) setBtn.textContent = "📍 Change location";
+  } else {
+    chip.hidden = true; chip.innerHTML = "";
+    if (setBtn) setBtn.textContent = "📍 Set location (optional)";
+  }
+}
+
+function setLocPin(lat, lng) {
+  _locPick = { lat, lng };
+  const g = window.google.maps;
+  if (!_locMarker) {
+    _locMarker = new g.Marker({ position: _locPick, map: _locMap, draggable: true });
+    _locMarker.addListener("dragend", (ev) => {
+      _locPick = { lat: ev.latLng.lat(), lng: ev.latLng.lng() };
+      el("loc-chosen").textContent = `Pinned: ${_locPick.lat.toFixed(5)}, ${_locPick.lng.toFixed(5)}`;
+    });
+  } else {
+    _locMarker.setPosition(_locPick);
+  }
+  el("loc-confirm").disabled = false;
+  el("loc-chosen").textContent = `Pinned: ${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+async function openLocPicker() {
+  el("loc-modal").hidden = false;
+  document.body.style.overflow = "hidden";
+  el("loc-chosen").textContent = "Loading map…";
+  el("loc-confirm").disabled = !GOAL_LOC;
+  _locPick = GOAL_LOC ? { lat: GOAL_LOC.lat, lng: GOAL_LOC.lng } : null;
+  try { await loadMapsJs(); }
+  catch (e) { el("loc-chosen").textContent = "Couldn't load the map — you can still run without a location."; return; }
+  const g = window.google.maps;
+  // Best-effort current location: used to drop a distinct "you are here" dot and,
+  // when no pin exists yet, to center the map. Denied/unavailable → no dot, no error.
+  const here = await getUserLocation();
+  let center = GOAL_LOC ? { lat: GOAL_LOC.lat, lng: GOAL_LOC.lng } : (here || { lat: 20.2961, lng: 85.8245 });
+  if (!_locMap) {
+    _locMap = new g.Map(el("loc-map"), {
+      center, zoom: 13, mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+    });
+    _locMap.addListener("click", (ev) => setLocPin(ev.latLng.lat(), ev.latLng.lng()));
+  } else {
+    _locMap.setCenter(center);
+  }
+  // Distinct current-location marker (blue dot, not draggable) vs. the red
+  // destination pin the user drops. Refresh its position each open.
+  if (here) {
+    const youPos = { lat: here.lat, lng: here.lng };
+    if (!_locYouMarker) {
+      _locYouMarker = new g.Marker({
+        position: youPos, map: _locMap, clickable: false, zIndex: 1,
+        title: "Your current location",
+        icon: {
+          path: g.SymbolPath.CIRCLE, scale: 7,
+          fillColor: "#1a73e8", fillOpacity: 1,
+          strokeColor: "#ffffff", strokeWeight: 2.5,
+        },
+      });
+    } else {
+      _locYouMarker.setPosition(youPos);
+      _locYouMarker.setMap(_locMap);
+    }
+  } else if (_locYouMarker) {
+    _locYouMarker.setMap(null);
+  }
+  if (_locMarker) { _locMarker.setMap(null); _locMarker = null; }
+  if (_locPick) setLocPin(_locPick.lat, _locPick.lng);
+  else el("loc-chosen").textContent = "Click the map to drop a pin.";
+  // Nudge the map to relayout now that its container is visible.
+  setTimeout(() => { g.event.trigger(_locMap, "resize"); _locMap.setCenter(center); }, 180);
+}
+
+function closeLocPicker() { el("loc-modal").hidden = true; document.body.style.overflow = ""; }
+
+async function confirmLocPicker() {
+  if (!_locPick) { closeLocPicker(); return; }
+  const { lat, lng } = _locPick;
+  let label = null;
+  try {
+    const r = await api("/geocode/reverse", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lng }),
+    });
+    if (r && r.available && r.label) label = r.label;
+  } catch { /* fall back to coords */ }
+  GOAL_LOC = { lat, lng, label: label || `${lat.toFixed(4)}, ${lng.toFixed(4)}` };
+  renderLocChip();
+  closeLocPicker();
+  toast(`Location set: ${GOAL_LOC.label}`);
+}
+
+(function wireLocPicker() {
+  const setBtn = el("set-location");
+  if (setBtn) setBtn.onclick = openLocPicker;
+  el("loc-close").onclick = closeLocPicker;
+  el("loc-cancel").onclick = closeLocPicker;
+  el("loc-confirm").onclick = confirmLocPicker;
+  el("loc-modal").addEventListener("click", (e) => { if (e.target === el("loc-modal")) closeLocPicker(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !el("loc-modal").hidden) closeLocPicker(); });
+})();
 
 // ---------- drafts (Lane B) ----------
 function draftCardHTML(d) {
@@ -2521,9 +2751,16 @@ function renderDetailBlocks() {
       let titleText = cleanBlockTitle(b.title, goal);
       const chunk = parseChunk(titleText); if (chunk) titleText = chunk.base;
       const time = `${fmtTime(new Date(b.start))}<br>${fmtTime(new Date(b.end))}`;
+      // Map the stored block's location fields to the shared evLocHTML shape so
+      // the label + commute + See-route render identically to the live timeline.
+      const locCell = evLocHTML({
+        location: b.location,
+        geo: (b.loc_lat != null && b.loc_lng != null) ? { lat: b.loc_lat, lng: b.loc_lng } : null,
+        origin: (b.origin_lat != null && b.origin_lng != null) ? { lat: b.origin_lat, lng: b.origin_lng } : null,
+      });
       html += `<div class="ev kairos" data-id="${esc(b.event_id)}">
           <div class="time">${time}</div>
-          <div><div class="title">${esc(titleText)}</div></div>
+          <div><div class="title">${esc(titleText)}</div>${locCell}</div>
           <div class="ev-actions">
             <span class="badge">KAIROS</span>
             <button class="ev-dismiss" data-dismiss="${esc(b.event_id)}" title="Remove this focus block" aria-label="Remove this Kairos block">✕</button>
@@ -2533,6 +2770,7 @@ function renderDetailBlocks() {
     html += `</div>`;
   });
   card.innerHTML = html; card.hidden = false;
+  hydrateCommutes(card);   // fill commute times for located blocks (best-effort)
 }
 
 // Keep the in-memory demo history record in sync with the detail working copy.
@@ -2634,8 +2872,13 @@ function demoHistoryEntry(result) {
     .filter((a) => a.name === "create_calendar_event")
     .map((a) => {
       const r = a.result || {}, ar = a.args || {};
-      return { event_id: r.event_id, title: r.title || ar.title, goal: r.goal || result.goal,
-               start: r.start || ar.start, end: r.end || ar.end };
+      const b = { event_id: r.event_id, title: r.title || ar.title, goal: r.goal || result.goal,
+                  start: r.start || ar.start, end: r.end || ar.end };
+      if (r.loc_lat != null && r.loc_lng != null) {  // optional location metadata
+        b.location = r.location; b.loc_lat = r.loc_lat; b.loc_lng = r.loc_lng;
+        if (r.origin_lat != null && r.origin_lng != null) { b.origin_lat = r.origin_lat; b.origin_lng = r.origin_lng; }
+      }
+      return b;
     })
     .filter((b) => b.event_id);
   const drafts = (result.drafts || []).map((d) => ({ ...d, history_id: id, status: d.status || "proposed" }));
@@ -2658,6 +2901,7 @@ if (/accounts\.google\.com|\/oauth2callback/.test(document.referrer || "")) {
 }
 
 checkAuth();                        // resolves auth, then routes to the right initial view
+initMapsConfig();                   // reveals the optional location control iff a browser Maps key is configured
 </script>
 </body>
 </html>
