@@ -676,7 +676,20 @@
     border-color: color-mix(in srgb, var(--danger) 45%, transparent);
   }
 
+  /* ===================== Responsive: tablet / small (≤720px) ===================== */
   @media (max-width: 720px) {
+    /* Belt-and-suspenders: never allow sideways scroll, and let long unbroken
+       words/labels wrap instead of forcing the layout wider than the screen. */
+    html, body { overflow-x: hidden; }
+    .wrap { padding-left: 16px; padding-right: 16px; }
+    .ev .title, .receipt .grow, .draft .subject, .goal-pill { overflow-wrap: anywhere; }
+
+    /* Header: keep the brand on the left, let the nav cluster wrap below it. */
+    .header-in { padding: 11px 16px; gap: 10px 12px; flex-wrap: wrap; }
+    .nav { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+
+    .card { padding: 18px; }
+
     .feature-grid, .steps { grid-template-columns: 1fr; }
     .tech-list { grid-template-columns: 1fr; }
     .field-row { grid-template-columns: 1fr; }
@@ -685,6 +698,43 @@
     .ev .ev-actions { grid-column: 2; justify-self: start; }
     .nav .navlink { padding: 9px 10px; }
     .brand .name { font-size: 20px; }
+  }
+
+  /* ===================== Responsive: phone (≤600px) ===================== */
+  @media (max-width: 600px) {
+    .wrap { padding: 0 14px 64px; }
+    .hero { padding: 52px 8px 40px; }
+    .card { padding: 16px; }
+    .feature { padding: 20px 18px; }
+
+    /* Header condenses further so it fits a phone width. */
+    .header-in { padding: 10px 14px; }
+    .brand .name { font-size: 18px; }
+    .navlink { padding: 8px 9px; font-size: 13.5px; }
+
+    /* Goal/deadline run buttons stack full-width; hint on its own line. */
+    .run-row { gap: 10px; }
+    .run-row .btn { width: 100%; }
+    .run-row .run-hint { width: 100%; text-align: center; }
+
+    /* Schedule range: fields + Apply stack and fill the width. */
+    .range-fields .field { flex: 1 1 100%; }
+    .range-fields #range-apply { width: 100%; }
+
+    /* History controls: search full width, sort/clear share the next row. */
+    .history-controls .history-search { flex: 1 1 100%; min-width: 0; }
+    .history-controls #history-sort,
+    .history-controls #history-clear { flex: 1 1 0; }
+
+    /* Modals fit the viewport with margins, scroll inside, buttons reachable. */
+    .modal-backdrop { padding: 12px; }
+    .modal { padding: 22px 18px; max-height: 92vh; }
+    .modal.confirm-modal { padding: 22px 18px; }
+    .modal h2 { font-size: 20px; }
+    .modal-actions .btn { flex: 1 1 auto; }
+
+    /* Location picker map shorter so the modal + its buttons fit on a phone. */
+    #loc-map { height: 52vh; max-height: 320px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
