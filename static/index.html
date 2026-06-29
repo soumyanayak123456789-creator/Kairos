@@ -960,6 +960,7 @@
     </div>
     <section class="card" id="detail-meta"></section>
     <div class="card" id="detail-timeline"></div>
+    <div class="card" id="detail-drafts" hidden></div>
     <div class="footer-bar" id="detail-footer" hidden>
       <div class="note">“Undo all” and per-block delete remove these focus blocks from your real calendar. Your own events are never touched.</div>
       <button class="btn danger sm" id="detail-undo-all">
@@ -967,6 +968,9 @@
         Undo all
       </button>
     </div>
+
+    <!-- Undo progress / success (same component + styling as the results page) -->
+    <div class="undo-status" id="detail-undo-status" hidden></div>
   </section>
 
   <div class="pagefoot">Kairos · The Last-Minute Life Saver · built on Google Cloud</div>
@@ -1415,8 +1419,9 @@ async function runKairos() {
         body: JSON.stringify({ goal, deadline: deadline || null, hours }),
       });
       DEMO.timeline = result.timeline || [];
-      DEMO.drafts = result.drafts || [];
-      DEMO.history.unshift(demoHistoryEntry(result));  // in-memory history (this session)
+      const _entry = demoHistoryEntry(result);          // tags this run's drafts with the entry id
+      DEMO.drafts = _entry.drafts;                      // main-area drafts share that tagging
+      DEMO.history.unshift(_entry);                     // in-memory history (this session)
     } else {
       const p = new URLSearchParams({ hours: String(hours), goal });
       if (deadline) p.set("deadline", deadline);
@@ -2308,26 +2313,46 @@ function renderHistoryList() {
   let rows = (currentHistory() || []).slice();
   const q = HISTORY.search.trim().toLowerCase();
   if (q) rows = rows.filter((r) => String(r.goal || "").toLowerCase().includes(q));
-  rows.sort((a, b) => {
-    const da = new Date(a.created_at || 0), db_ = new Date(b.created_at || 0);
-    return HISTORY.sortNewest ? db_ - da : da - db_;
-  });
   if (!rows.length) {
     list.innerHTML = `<div class="empty">${q ? "No tasks match your search."
       : "No tasks yet. Run Kairos on a goal and it'll show up here."}</div>`;
     return;
   }
-  list.innerHTML = rows.map((r) => {
-    const n = r.block_count != null ? r.block_count : (r.blocks || []).length;
-    return `<div class="hist-row" data-id="${esc(r.id)}" role="button" tabindex="0" aria-label="Open task: ${esc(r.goal || "untitled goal")}">
-        <div class="hist-main">
-          <div class="hist-goal">${esc(r.goal || "(untitled goal)")}</div>
-          <div class="hist-meta">${esc(fmtHistoryDate(r.created_at))}</div>
-        </div>
-        <span class="hist-count">${n} block${n === 1 ? "" : "s"}</span>
-        <button class="hist-del" data-del="${esc(r.id)}" title="Remove from history" aria-label="Remove this task from history">✕</button>
-      </div>`;
-  }).join("");
+  // Group tasks under their actual creation DAY (a date header per day, like the
+  // timeline). The sort toggle reorders both the date groups and the tasks within.
+  const dir = HISTORY.sortNewest ? -1 : 1;
+  const groups = {};
+  rows.forEach((r) => {
+    const d = new Date(r.created_at || 0);
+    const key = isNaN(d.getTime()) ? "—" : d.toDateString();
+    (groups[key] = groups[key] || []).push(r);
+  });
+  const keys = Object.keys(groups).sort((a, b) => {
+    if (a === "—") return 1; if (b === "—") return -1;      // unknown dates last
+    return (new Date(a) - new Date(b)) * dir;
+  });
+  let html = "";
+  keys.forEach((key) => {
+    const items = groups[key].sort((a, b) =>
+      (new Date(a.created_at || 0) - new Date(b.created_at || 0)) * dir);
+    const label = key === "—" ? "Unknown date" : fmtDay(new Date(key));
+    html += `<div class="day-group"><div class="day-label">${esc(label)}</div>`;
+    items.forEach((r) => {
+      const n = r.block_count != null ? r.block_count : (r.blocks || []).length;
+      const td = new Date(r.created_at || 0);
+      const t = isNaN(td.getTime()) ? "" : fmtTime(td);
+      html += `<div class="hist-row" data-id="${esc(r.id)}" role="button" tabindex="0" aria-label="Open task: ${esc(r.goal || "untitled goal")}">
+          <div class="hist-main">
+            <div class="hist-goal">${esc(r.goal || "(untitled goal)")}</div>
+            <div class="hist-meta">${esc(t)}</div>
+          </div>
+          <span class="hist-count">${n} block${n === 1 ? "" : "s"}</span>
+          <button class="hist-del" data-del="${esc(r.id)}" title="Remove from history" aria-label="Remove this task from history">✕</button>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+  list.innerHTML = html;
 }
 
 // Delegated: open a task, or delete its history row (× — calendar untouched).
@@ -2355,6 +2380,9 @@ el("history-list").addEventListener("keydown", (e) => {
 async function deleteHistoryEntry(id) {
   if (DEMO.active) {
     DEMO.history = DEMO.history.filter((r) => String(r.id) !== String(id));
+    // Drop this task's UNCONFIRMED drafts from the main area (approved stay).
+    DEMO.drafts = (DEMO.drafts || []).filter((d) => d.history_id !== id || d.status === "confirmed");
+    renderDemoDrafts(DEMO.drafts);
     toast("Removed from history."); renderHistoryList(); return;
   }
   try {
@@ -2362,6 +2390,7 @@ async function deleteHistoryEntry(id) {
     HISTORY.entries = HISTORY.entries.filter((r) => String(r.id) !== String(id));
     toast("Removed from history — your calendar blocks stay.");
     renderHistoryList();
+    await loadDrafts();  // its unconfirmed drafts were removed server-side
   } catch (e) { toast(e.message, true); }
 }
 
@@ -2379,13 +2408,18 @@ el("history-clear").onclick = async () => {
     yes: "Yes, clear all",
   }))) return;
   if (DEMO.active) {
-    DEMO.history = []; toast("Task history cleared."); renderHistoryList(); return;
+    DEMO.history = [];
+    // All cleared tasks' UNCONFIRMED drafts go too; approved drafts stay.
+    DEMO.drafts = (DEMO.drafts || []).filter((d) => d.status === "confirmed");
+    renderDemoDrafts(DEMO.drafts);
+    toast("Task history cleared."); renderHistoryList(); return;
   }
   try {
     await api("/agent/history", { method: "DELETE" });
     HISTORY.entries = [];
     toast("Task history cleared — your calendar blocks stay.");
     renderHistoryList();
+    await loadDrafts();  // cleared tasks' unconfirmed drafts were removed server-side
   } catch (e) { toast(e.message, true); }
 };
 
@@ -2397,9 +2431,13 @@ function openTaskDetail(id) {
   _detailEntry = {
     id: src.id, goal: src.goal, deadline: src.deadline, created_at: src.created_at,
     blocks: (src.blocks || []).map((b) => ({ ...b })),
+    drafts: (src.drafts || []).map((d) => ({ ...d })),  // demo carries them; real loads live below
   };
+  const status = el("detail-undo-status");
+  if (status) status.hidden = true;  // clear any stale progress/success from a prior task
   showView("detail");
   renderDetail();
+  if (!DEMO.active) loadDetailDrafts();  // real: fetch this task's live rescue drafts
 }
 
 function renderDetail() {
@@ -2414,7 +2452,54 @@ function renderDetail() {
     </div>
     <div class="hist-meta" style="margin-top:8px">Created ${esc(fmtHistoryDate(_detailEntry.created_at))}</div>`;
   renderDetailBlocks();
+  renderDetailDrafts(_detailEntry.drafts || []);
   el("detail-footer").hidden = !n;
+}
+
+// Fetch this task's LIVE rescue drafts (real mode) by history id, so status is
+// current; demo reads them from the in-memory entry instead.
+async function loadDetailDrafts() {
+  if (!_detailEntry || DEMO.active) return;
+  try {
+    const data = await api(`/agent/drafts?history_id=${encodeURIComponent(_detailEntry.id)}`);
+    _detailEntry.drafts = (data.drafts || []).filter((d) => d.status !== "dismissed");
+  } catch (_) { _detailEntry.drafts = []; }
+  renderDetailDrafts(_detailEntry.drafts);
+}
+
+// Read-only draft cards shown on the task detail page (copy only — confirm/edit/
+// dismiss stay on the results + Approved pages). Approved drafts are shown here
+// too but are never removed by task actions.
+function renderDetailDrafts(drafts) {
+  const card = el("detail-drafts");
+  if (!card) return;
+  const list = (drafts || []).filter((d) => d.status !== "dismissed");
+  if (!list.length) { card.hidden = true; card.innerHTML = ""; return; }
+  let html = `<p class="section-title">Rescue drafts for this task</p>
+    <div class="banner info" style="margin-bottom:14px"><span>🛟</span><div>Kairos drafted these because this deadline looked at risk. <strong>Nothing is ever sent</strong> — approve/dismiss them from the results &amp; Approved pages, then copy &amp; send yourself.</div></div>`;
+  list.forEach((d) => {
+    const approved = d.status === "confirmed";
+    html += `<div class="draft" data-id="${esc(d.draft_id)}">
+        <div class="draft-top">
+          <span class="to">To: ${esc(d.recipient || "—")}</span>
+          <span class="draft-status ${approved ? "confirmed" : "proposed"}">${approved ? "Approved" : "Awaiting you"}</span>
+        </div>
+        <div class="subject">${esc(d.subject || "(no subject)")}</div>
+        <div class="body">${esc(d.body || "")}</div>
+        <p class="nosend">🔒 Never sent — copy &amp; send it yourself (Kairos has no Gmail access).</p>
+        <div class="draft-actions"><button class="btn sm" data-act="copy">Copy</button></div>
+      </div>`;
+  });
+  card.innerHTML = html;
+  card.hidden = false;
+  card.querySelectorAll(".draft").forEach((node) => {
+    const d = list.find((x) => x.draft_id === node.dataset.id);
+    const btn = node.querySelector('[data-act="copy"]');
+    if (btn && d) btn.onclick = async () => {
+      const ok = await copyText(`Subject: ${d.subject || ""}\n\n${d.body || ""}`);
+      toast(ok ? "Draft copied" : "Couldn't copy", !ok);
+    };
+  });
 }
 
 function renderDetailBlocks() {
@@ -2454,7 +2539,11 @@ function renderDetailBlocks() {
 function syncDemoEntry() {
   if (!DEMO.active || !_detailEntry) return;
   const src = DEMO.history.find((r) => String(r.id) === String(_detailEntry.id));
-  if (src) { src.blocks = _detailEntry.blocks.map((b) => ({ ...b })); src.block_count = src.blocks.length; }
+  if (src) {
+    src.blocks = _detailEntry.blocks.map((b) => ({ ...b }));
+    src.block_count = src.blocks.length;
+    src.drafts = (_detailEntry.drafts || []).map((d) => ({ ...d }));
+  }
 }
 
 // Per-block delete on the detail page (delegated). Real → marked-only delete via
@@ -2493,23 +2582,54 @@ el("detail-undo-all").onclick = async () => {
     yes: "Yes, remove all",
   }))) return;
   const btn = el("detail-undo-all");
+  const status = el("detail-undo-status");
   btn.disabled = true;
+  const blockCount = (_detailEntry.blocks || []).length;
   if (DEMO.active) {
-    _detailEntry.blocks = []; syncDemoEntry();
-    toast("All blocks removed"); btn.disabled = false; renderDetail(); return;
+    _detailEntry.blocks = [];
+    // This task's UNCONFIRMED drafts belong to it — clear them too (main + detail).
+    _detailEntry.drafts = (_detailEntry.drafts || []).filter((d) => d.status === "confirmed");
+    DEMO.drafts = (DEMO.drafts || []).filter((d) => d.history_id !== _detailEntry.id || d.status === "confirmed");
+    renderDemoDrafts(DEMO.drafts);
+    syncDemoEntry();
+    renderDetail();
+    // Same success component as the results page (demo work is instant, in-memory).
+    status.className = "undo-status done";
+    status.hidden = false;
+    status.innerHTML = `<span class="check"></span>
+      <div>Removed ${blockCount} Kairos block${blockCount === 1 ? "" : "s"} — your own events are untouched.</div>`;
+    toast("All blocks removed");
+    btn.disabled = false;
+    setTimeout(() => { status.hidden = true; }, 6000);
+    return;
   }
+  // In-flight progress indicator (identical component + styling to results undo-all).
+  status.className = "undo-status";
+  status.hidden = false;
+  status.innerHTML = `<span class="mini-spin"></span>
+    <div class="grow">Removing Kairos focus blocks…<div class="ubar"><i></i></div></div>`;
   try {
     const r = await api(`/agent/history/${encodeURIComponent(_detailEntry.id)}/undo-all`, { method: "POST" });
     const n = r.events_deleted ?? 0;
-    toast(`Removed ${n} block${n === 1 ? "" : "s"} — your own events are untouched.`);
     _detailEntry.blocks = [];
     renderDetail();
-  } catch (e) { toast(e.message, true); }
+    await loadDetailDrafts();  // this task's unconfirmed drafts were removed server-side
+    await loadDrafts();        // refresh the main "Needs Your Call" area too
+    // Success state.
+    status.className = "undo-status done";
+    status.innerHTML = `<span class="check"></span>
+      <div>Removed ${n} Kairos block${n === 1 ? "" : "s"} — your own events are untouched.</div>`;
+    toast(`Removed ${n} block${n === 1 ? "" : "s"} — your own events are untouched.`);
+    setTimeout(() => { status.hidden = true; }, 6000);
+  } catch (e) { status.hidden = true; toast(e.message, true); }
   finally { btn.disabled = false; }
 };
 
 // Build a demo history entry from a completed demo run result (in-memory only).
+// The run's rescue drafts are tagged with this entry id so they associate with
+// the task (shown in detail, removed with the task) — mirrors the real backend.
 function demoHistoryEntry(result) {
+  const id = "demo-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
   const blocks = (result.executed_actions || [])
     .filter((a) => a.name === "create_calendar_event")
     .map((a) => {
@@ -2518,9 +2638,9 @@ function demoHistoryEntry(result) {
                start: r.start || ar.start, end: r.end || ar.end };
     })
     .filter((b) => b.event_id);
-  return { id: "demo-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7),
-    goal: result.goal, deadline: result.deadline, blocks, block_count: blocks.length,
-    created_at: new Date().toISOString() };
+  const drafts = (result.drafts || []).map((d) => ({ ...d, history_id: id, status: d.status || "proposed" }));
+  return { id, goal: result.goal, deadline: result.deadline,
+    blocks, block_count: blocks.length, drafts, created_at: new Date().toISOString() };
 }
 
 // ---------- boot ----------

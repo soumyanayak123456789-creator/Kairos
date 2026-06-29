@@ -1142,29 +1142,65 @@ def _blocks_from_actions(executed_actions: list[dict]) -> list[dict]:
 
 
 def record_task_history(sub: str, goal: str | None, deadline: str | None,
-                        executed_actions: list[dict]) -> str | None:
+                        executed_actions: list[dict],
+                        drafts: list[dict] | None = None) -> str | None:
     """Persist one completed goal run under users/{sub}/task_history.
 
     Best-effort + additive: only runs that carry an explicit goal are recorded
     (no-goal schedule reviews are skipped), and any failure is logged and
-    swallowed so it can never break the agent run or the response.
+    swallowed so it can never break the agent run or the response. The rescue
+    drafts produced this run are TAGGED with the new history id (so they can be
+    matched, shown in the task detail, and removed with the task), and their ids
+    are recorded on the entry.
     """
     if not goal:
         return None
     blocks = _blocks_from_actions(executed_actions)
+    draft_ids = [d.get("draft_id") for d in (drafts or []) if d.get("draft_id")]
     try:
         ref = db().collection(USERS).document(sub).collection(TASK_HISTORY).document()
+        hist_id = ref.id
         ref.set({
             "goal": goal,
             "deadline": deadline,
             "blocks": blocks,
             "block_count": len(blocks),
+            "draft_ids": draft_ids,
             "created_at": firestore.SERVER_TIMESTAMP,
         })
-        return ref.id
+        # Tag each draft this run produced with its task id (merge — never alters
+        # draft content/status), so drafts↔task association is explicit.
+        if draft_ids:
+            batch = db().batch()
+            dcoll = db().collection(USERS).document(sub).collection(DRAFTS)
+            for did in draft_ids:
+                batch.set(dcoll.document(did), {"history_id": hist_id}, merge=True)
+            batch.commit()
+        return hist_id
     except Exception as e:  # noqa: BLE001 — history is additive; never break a run
         logger.warning("record_task_history failed: %s", e)
         return None
+
+
+def _remove_task_proposed_drafts(sub: str, hist_id: str) -> int:
+    """Delete the PROPOSED (unconfirmed) drafts tied to a history task.
+
+    Confirmed/approved drafts are NEVER touched — they persist independently on
+    the Approved page. Used when a task is deleted from history or undone.
+    """
+    if not hist_id:
+        return 0
+    dcoll = db().collection(USERS).document(sub).collection(DRAFTS)
+    removed = 0
+    for d in dcoll.stream():  # small collection; filter in Python (no index needed)
+        rec = d.to_dict()
+        if rec.get("history_id") != hist_id:
+            continue
+        if rec.get("status") == "confirmed" or rec.get("sent"):
+            continue  # approved drafts persist independently
+        d.reference.delete()
+        removed += 1
+    return removed
 
 
 def _history_view(doc_id: str, rec: dict) -> dict:
@@ -1177,6 +1213,7 @@ def _history_view(doc_id: str, rec: dict) -> dict:
         "deadline": rec.get("deadline"),
         "blocks": blocks,
         "block_count": rec.get("block_count", len(blocks)),
+        "draft_ids": rec.get("draft_ids") or [],
         "created_at": created.isoformat() if isinstance(created, datetime) else None,
     }
 
@@ -1326,6 +1363,7 @@ def _draft_view(doc_id: str, rec: dict) -> dict:
         "body": rec.get("body"),
         "goal": rec.get("goal"),
         "unmet_portion": rec.get("unmet_portion"),
+        "history_id": rec.get("history_id"),  # the Task History entry this draft belongs to
         "sent": rec.get("sent", False),
         "created_at": rec.get("created_at").isoformat() if isinstance(rec.get("created_at"), datetime) else None,
         "updated_at": rec.get("updated_at").isoformat() if isinstance(rec.get("updated_at"), datetime) else None,
@@ -1728,7 +1766,7 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
 
     # Record this completed goal run to Task History (additive, best-effort —
     # AFTER the loop, so it never affects scheduling, the writes, or the result).
-    history_id = record_task_history(sub, goal, deadline, executed_actions)
+    history_id = record_task_history(sub, goal, deadline, executed_actions, drafts)
 
     return {
         "goal": goal,
@@ -2612,24 +2650,36 @@ def agent_history_get(entry_id: str, request: Request):
 
 @app.delete("/agent/history/{entry_id}")
 def agent_history_delete(entry_id: str, request: Request):
-    """Remove ONE entry from history. The calendar blocks are NOT touched."""
+    """Remove ONE entry from history. The calendar blocks are NOT touched.
+
+    Also removes this task's UNCONFIRMED (proposed) rescue drafts — approved
+    drafts persist independently on the Approved page.
+    """
     sub, _ = _require_user(request)
     ref = db().collection(USERS).document(sub).collection(TASK_HISTORY).document(entry_id)
     if not ref.get().exists:
         raise HTTPException(status_code=404, detail="Task not found in history.")
     ref.delete()
-    return {"deleted": True, "id": entry_id, "calendar_touched": False}
+    drafts_removed = _remove_task_proposed_drafts(sub, entry_id)
+    return {"deleted": True, "id": entry_id, "calendar_touched": False,
+            "proposed_drafts_removed": drafts_removed}
 
 
 @app.delete("/agent/history")
 def agent_history_clear(request: Request):
-    """Clear ALL history entries. The calendar blocks are NOT touched."""
+    """Clear ALL history entries. The calendar blocks are NOT touched.
+
+    Also removes the cleared tasks' UNCONFIRMED (proposed) rescue drafts —
+    approved drafts persist independently on the Approved page.
+    """
     sub, _ = _require_user(request)
     coll = db().collection(USERS).document(sub).collection(TASK_HISTORY)
     deleted = 0
+    cleared_ids: set[str] = set()
     batch = db().batch()
     pending = 0
     for d in coll.stream():
+        cleared_ids.add(d.id)
         batch.delete(d.reference)
         deleted += 1
         pending += 1
@@ -2639,7 +2689,20 @@ def agent_history_clear(request: Request):
             pending = 0
     if pending:
         batch.commit()
-    return {"deleted": deleted, "calendar_touched": False}
+    # Drop proposed drafts tied to any cleared task; keep approved ones.
+    drafts_removed = 0
+    if cleared_ids:
+        dcoll = db().collection(USERS).document(sub).collection(DRAFTS)
+        for dr in dcoll.stream():
+            rec = dr.to_dict()
+            if rec.get("history_id") not in cleared_ids:
+                continue
+            if rec.get("status") == "confirmed" or rec.get("sent"):
+                continue
+            dr.reference.delete()
+            drafts_removed += 1
+    return {"deleted": deleted, "calendar_touched": False,
+            "proposed_drafts_removed": drafts_removed}
 
 
 @app.post("/agent/history/{entry_id}/undo-all")
@@ -2692,11 +2755,16 @@ def agent_history_undo_all(entry_id: str, request: Request):
                 d.reference.set({"undone": True, "undone_at": firestore.SERVER_TIMESTAMP}, merge=True)
                 actions_marked += 1
 
+    # This task's rescue drafts belong to the task — clear its UNCONFIRMED ones
+    # from the main area too (approved drafts persist on the Approved page).
+    drafts_removed = _remove_task_proposed_drafts(sub, entry_id)
+
     return {
         "events_deleted": events_deleted,
         "already_gone": already_gone,
         "events_skipped_unmarked": events_skipped_unmarked,
         "actions_marked_undone": actions_marked,
+        "proposed_drafts_removed": drafts_removed,
     }
 
 
@@ -2718,15 +2786,23 @@ def _get_draft_ref_or_404(sub: str, draft_id: str):
 
 
 @app.get("/agent/drafts")
-def agent_drafts(request: Request, status: str | None = None, limit: int = 20):
-    """List Lane B rescue drafts (newest first). Optional ?status= filter."""
+def agent_drafts(request: Request, status: str | None = None,
+                 history_id: str | None = None, limit: int = 50):
+    """List Lane B rescue drafts (newest first).
+
+    Optional ?status= filter and ?history_id= filter (the latter returns only the
+    drafts tied to a given Task History entry — used by the task detail page).
+    """
     sub, _ = _require_user(request)
     q = (
         db().collection(USERS).document(sub).collection(DRAFTS)
         .order_by("created_at", direction=firestore.Query.DESCENDING)
         .limit(limit)
     )
-    out = [_draft_view(d.id, d.to_dict()) for d in q.stream()]
+    rows = [(d.id, d.to_dict()) for d in q.stream()]
+    if history_id is not None:
+        rows = [(i, r) for (i, r) in rows if r.get("history_id") == history_id]
+    out = [_draft_view(i, r) for (i, r) in rows]
     if status:
         out = [d for d in out if d["status"] == status]
     return {"drafts": out}
