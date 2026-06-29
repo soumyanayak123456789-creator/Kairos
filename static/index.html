@@ -556,6 +556,44 @@
   .demo-block { display: flex; align-items: center; gap: 10px; background: linear-gradient(100deg, var(--accent-soft), var(--blue-soft)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-left: 4px solid var(--accent); border-radius: 10px; padding: 10px 13px; font-size: 13.5px; margin-top: 8px; color: var(--text); }
   .modal-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
 
+  /* ============ Reusable confirm modal ============ */
+  /* Reuses .modal-backdrop / .modal / .modal-close styling above; just narrower
+     and centered for a yes/no decision. On theme + dark/light by inheritance. */
+  .modal.confirm-modal { max-width: 420px; padding: 28px 26px 24px; }
+  .modal.confirm-modal h2 { margin: 4px 0 8px; font-size: 20px; }
+  .modal.confirm-modal .confirm-msg { margin: 0; color: var(--text-dim); font-size: 14.5px; }
+  .modal.confirm-modal .modal-actions { margin-top: 24px; }
+  .modal.confirm-modal .modal-actions .btn { min-width: 92px; }
+
+  /* ============ Task History ============ */
+  .history-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .history-controls .history-search { flex: 1; min-width: 180px; }
+  .history-note { font-size: 12.5px; margin: 0 0 18px; }
+  .history-list { display: flex; flex-direction: column; gap: 10px; }
+  .hist-row {
+    display: flex; align-items: center; gap: 14px; text-align: left; width: 100%;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 14px 16px; cursor: pointer; transition: background .15s, border-color .15s, transform .12s;
+  }
+  .hist-row:hover { background: var(--surface-3); border-color: var(--border-2); transform: translateY(-1px); }
+  .hist-row .hist-main { flex: 1; min-width: 0; }
+  .hist-row .hist-goal { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hist-row .hist-meta { font-size: 12.5px; color: var(--text-faint); margin-top: 3px; }
+  .hist-row .hist-count {
+    font-size: 12px; font-weight: 700; color: var(--accent-ink); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    padding: 4px 11px; border-radius: 999px; white-space: nowrap; flex: none;
+  }
+  .hist-del {
+    border: 1px solid var(--border-2); background: var(--surface); color: var(--text-faint);
+    width: 30px; height: 30px; border-radius: 999px; cursor: pointer; font-size: 13px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .hist-del:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+  .detail-meta-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .detail-meta-row .dm-deadline { font-size: 13px; color: var(--text-faint); }
+
   /* ============ Connect gate ============ */
   .gate { text-align: center; padding: 50px 22px; }
   .gate .gico { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 16px; background: var(--accent-soft); display: grid; place-items: center; color: var(--accent-ink); }
@@ -659,6 +697,7 @@
     <div class="nav">
       <button class="navlink" id="nav-home" data-nav="landing">Home</button>
       <button class="navlink" id="nav-about" data-nav="about">About</button>
+      <button class="navlink" id="nav-history" data-nav="history" hidden>Task History</button>
       <button class="navlink" id="nav-approved" data-nav="approved" hidden>Approved<span class="nav-count" id="approved-count">0</span></button>
       <button class="icon-btn" id="theme-toggle" aria-label="Toggle dark mode"></button>
       <div class="auth" id="auth"><!-- filled by JS --></div>
@@ -896,6 +935,40 @@
     <section class="card" id="approved-card"></section>
   </section>
 
+  <!-- ============ TASK HISTORY (list) ============ -->
+  <section class="view" id="view-history" hidden>
+    <div class="results-head">
+      <h2>Task History</h2>
+      <button class="btn ghost sm" id="history-back">← Back to app</button>
+    </div>
+    <section class="card">
+      <div class="history-controls">
+        <input class="input history-search" id="history-search" type="search" placeholder="Search by goal…" aria-label="Search task history by goal" />
+        <button class="btn ghost sm" id="history-sort">Newest first</button>
+        <button class="btn danger sm" id="history-clear">Clear task history</button>
+      </div>
+      <p class="history-note muted">Removing a task here clears it from history only — your calendar blocks stay.</p>
+      <div class="history-list" id="history-list"></div>
+    </section>
+  </section>
+
+  <!-- ============ TASK DETAIL (one task's blocks) ============ -->
+  <section class="view" id="view-detail" hidden>
+    <div class="results-head">
+      <h2 id="detail-title">Task</h2>
+      <button class="btn ghost sm" id="detail-back">← Back to history</button>
+    </div>
+    <section class="card" id="detail-meta"></section>
+    <div class="card" id="detail-timeline"></div>
+    <div class="footer-bar" id="detail-footer" hidden>
+      <div class="note">“Undo all” and per-block delete remove these focus blocks from your real calendar. Your own events are never touched.</div>
+      <button class="btn danger sm" id="detail-undo-all">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 8c-2.65 0-5.05 1-6.9 2.6L2 7v9h9l-3.62-3.62A7.5 7.5 0 0 1 19.78 14h2.07A9.5 9.5 0 0 0 12.5 8z"/></svg>
+        Undo all
+      </button>
+    </div>
+  </section>
+
   <div class="pagefoot">Kairos · The Last-Minute Life Saver · built on Google Cloud</div>
 
 </div>
@@ -919,6 +992,19 @@
     <div class="modal-actions">
       <button class="btn" id="demo-about">See full details</button>
       <button class="btn ghost" id="demo-done">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reusable confirm modal (centered yes/no; × / backdrop / Esc = cancel) -->
+<div class="modal-backdrop" id="confirm-modal" hidden>
+  <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
+    <button class="modal-close" id="confirm-x" aria-label="Close without choosing">✕</button>
+    <h2 id="confirm-title">Please confirm</h2>
+    <p class="confirm-msg" id="confirm-msg">Do you want to proceed?</p>
+    <div class="modal-actions">
+      <button class="btn" id="confirm-yes">Yes</button>
+      <button class="btn ghost" id="confirm-no">No</button>
     </div>
   </div>
 </div>
@@ -996,11 +1082,15 @@ if (window.matchMedia) {
 const views = {
   landing: el("view-landing"), about: el("view-about"),
   app: el("view-app"), results: el("view-results"), approved: el("view-approved"),
+  history: el("view-history"), detail: el("view-detail"),
 };
 // History-aware so the browser Back button moves BETWEEN in-app views instead of
 // leaving the SPA (and dumping an authenticated user back at the connect gate).
 function showView(name, push = true, replace = false) {
   if (!views[name]) name = "landing";
+  // Detail needs a loaded task (e.g. a refresh/deep-link on #detail has none) —
+  // fall back to the history list rather than showing an empty detail page.
+  if (name === "detail" && !_detailEntry) name = "history";
   Object.entries(views).forEach(([k, v]) => { v.hidden = (k !== name); });
   document.querySelectorAll(".navlink").forEach((b) =>
     b.classList.toggle("active", b.dataset.nav === name));
@@ -1011,6 +1101,8 @@ function showView(name, push = true, replace = false) {
   // Demo has no auth refresh to repaint the preview — re-render it whenever the
   // user returns to the main page so the seeded "Upcoming events" always persists.
   if (DEMO.active && name === "app") loadPreview();
+  // Task History list reloads on entry (real fetch, or in-memory demo history).
+  if (name === "history") loadHistory();
   try {
     if (replace) history.replaceState({ view: name }, "", "#" + name);
     else if (push) history.pushState({ view: name }, "", "#" + name);
@@ -1027,8 +1119,11 @@ window.addEventListener("pageshow", (e) => { if (e.persisted && !DEMO.active) re
 el("brand-home").onclick = () => showView("landing");
 el("nav-home").onclick = () => showView("landing");
 el("nav-about").onclick = () => showView("about");
+el("nav-history").onclick = () => showView("history");
 el("nav-approved").onclick = () => showView("approved");
 el("approved-back").onclick = () => showView("app");
+el("history-back").onclick = () => showView("app");
+el("detail-back").onclick = () => showView("history");
 el("hero-about").onclick = () => showView("about");
 // "Get started" always begins the REAL flow. If demo mode is active, leave it
 // first (clears the banner/accent/chip + restores real state) so it never routes
@@ -1052,6 +1147,37 @@ function toast(msg, isErr = false) {
   // Hold ~2.8s for success (well-judged), longer for errors so they can be read.
   toastTimer = setTimeout(() => t.classList.remove("show"), isErr ? 5000 : 2800);
 }
+
+// ---------- reusable confirm modal (replaces native confirm()) ----------
+// Returns a Promise<boolean>: true on "Yes", false on "No" / × / backdrop / Esc.
+const confirmModalEl = el("confirm-modal");
+let _confirmResolve = null;
+function confirmAction({ title = "Please confirm", message = "Do you want to proceed?",
+                         yes = "Yes", no = "No" } = {}) {
+  return new Promise((resolve) => {
+    closeConfirm(false);                    // collapse any prior open instance first
+    el("confirm-title").textContent = title;
+    el("confirm-msg").textContent = message;
+    el("confirm-yes").textContent = yes;
+    el("confirm-no").textContent = no;
+    _confirmResolve = resolve;
+    confirmModalEl.hidden = false;
+    document.body.style.overflow = "hidden";
+    el("confirm-yes").focus();
+  });
+}
+function closeConfirm(result) {
+  if (confirmModalEl.hidden) return;
+  confirmModalEl.hidden = true;
+  document.body.style.overflow = "";
+  const r = _confirmResolve; _confirmResolve = null;
+  if (r) r(result);
+}
+el("confirm-yes").onclick = () => closeConfirm(true);
+el("confirm-no").onclick = () => closeConfirm(false);
+el("confirm-x").onclick = () => closeConfirm(false);
+confirmModalEl.addEventListener("click", (e) => { if (e.target === confirmModalEl) closeConfirm(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !confirmModalEl.hidden) closeConfirm(false); });
 
 // ---------- formatting ----------
 function fmtDay(d) {
@@ -1109,6 +1235,7 @@ function setLoggedOut() {
   footerEl.hidden = true;
   workingEl.hidden = true;
   el("preview-card").hidden = true; // no preview at the connect gate
+  el("nav-history").hidden = true;  // Task History needs a logged-in user
   setApprovedNav(0); // no drafts / nav entry when logged out
 }
 
@@ -1119,6 +1246,7 @@ function setLoggedIn(me) {
   el("hdr-reconnect").onclick = () => (window.location.replace("/login"));
   gateEl.hidden = true;
   commandEl.hidden = false;
+  el("nav-history").hidden = false;  // Task History available once signed in
   // Default deadline: tomorrow 18:00 local.
   if (!deadlineEl.value) {
     const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0);
@@ -1145,7 +1273,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !demoMod
 // ---------- DEMO / GUEST MODE (real agent reasoning on a seeded calendar) ----------
 // A self-contained sandbox: no Google login, no Firestore, no real calendar writes.
 // Runs against /agent/demo/run, which reuses the live agent reasoning server-side.
-const DEMO = { active: false, timeline: [], drafts: [], origin: null };
+const DEMO = { active: false, timeline: [], drafts: [], origin: null, history: [] };
 
 function enterDemo() {
   DEMO.active = true;
@@ -1160,6 +1288,7 @@ function enterDemo() {
   gateEl.hidden = true;
   commandEl.hidden = false;
   resultsEl.hidden = true;
+  el("nav-history").hidden = false;  // demo Task History (in-memory, this session)
   setApprovedNav(0);
   // Seed a sensible default deadline (3 days out, 18:00) so judges can just hit Run.
   const d = new Date(); d.setDate(d.getDate() + 3); d.setHours(18, 0, 0, 0);
@@ -1175,10 +1304,11 @@ function enterDemo() {
 
 function exitDemo() {
   DEMO.active = false;
-  DEMO.timeline = []; DEMO.drafts = []; DEMO.origin = null;
+  DEMO.timeline = []; DEMO.drafts = []; DEMO.origin = null; DEMO.history = [];
   document.documentElement.removeAttribute("data-demo");
   el("demo-banner").hidden = true;
   el("hero-demo-note").hidden = true;
+  el("nav-history").hidden = true;
   // Clear any demo results so nothing leaks into the live view.
   el("receipt-card").hidden = true; el("timeline-card").hidden = true; el("drafts-card").hidden = true;
   el("preview-card").hidden = true;
@@ -1286,6 +1416,7 @@ async function runKairos() {
       });
       DEMO.timeline = result.timeline || [];
       DEMO.drafts = result.drafts || [];
+      DEMO.history.unshift(demoHistoryEntry(result));  // in-memory history (this session)
     } else {
       const p = new URLSearchParams({ hours: String(hours), goal });
       if (deadline) p.set("deadline", deadline);
@@ -1919,7 +2050,11 @@ function setApprovedNav(n) {
 // endpoint). Calendar events are NEVER touched here — that's undo-all only.
 function clearDrafts(list, btn, label) {
   return async () => {
-    if (!confirm(`Clear ${label}? This dismisses them — your calendar is untouched.`)) return;
+    if (!(await confirmAction({
+      title: "Clear drafts?",
+      message: `Clear ${label}? This dismisses them — your calendar is untouched.`,
+      yes: "Yes, clear",
+    }))) return;
     btn.disabled = true;
     try {
       await Promise.all(list.map((d) => api(`/agent/draft/${d.draft_id}/dismiss`, { method: "POST" })));
@@ -2069,7 +2204,11 @@ function wireDraft(node) {
 
 // ---------- undo all (with progress + success state) ----------
 el("undo-all").onclick = async () => {
-  if (!confirm("Remove all Kairos-created focus blocks and reset the plan? Your own calendar events are never touched.")) return;
+  if (!(await confirmAction({
+    title: "Remove all Kairos blocks?",
+    message: "This removes every Kairos-created focus block and resets the plan. Your own calendar events are never touched.",
+    yes: "Yes, remove all",
+  }))) return;
   const btn = el("undo-all");
   const status = el("undo-status");
   btn.disabled = true;
@@ -2110,7 +2249,11 @@ el("timeline-card").addEventListener("click", async (e) => {
   if (!btn) return;
   const id = btn.getAttribute("data-dismiss");
   if (!id) return;
-  if (!confirm("Remove this Kairos focus block from your calendar? Your own events are never touched.")) return;
+  if (!(await confirmAction({
+    title: "Remove this focus block?",
+    message: "This removes the Kairos focus block from your calendar. Your own events are never touched.",
+    yes: "Yes, remove",
+  }))) return;
   // Demo: drop the block from the in-memory demo timeline and re-render (no API).
   if (DEMO.active) {
     DEMO.timeline = (DEMO.timeline || []).filter((ev) => String(ev.id) !== String(id));
@@ -2131,6 +2274,254 @@ el("timeline-card").addEventListener("click", async (e) => {
     toast(err.message, true);
   }
 });
+
+// ---------- Task History (list + detail) ----------
+// Additive layer. REAL history is fetched from /agent/history (persisted in
+// Firestore by the server when a goal run completes); DEMO history lives only in
+// memory for the session (DEMO.history) and resets on reload/exit. Deleting from
+// history (× or Clear all) NEVER touches the calendar; the detail page's per-block
+// delete and "Undo all" DO (reusing undo-event / the scoped undo-all endpoint).
+const HISTORY = { entries: [], sortNewest: true, search: "" };
+let _detailEntry = null;   // working copy for the open detail page: {id, goal, deadline, created_at, blocks}
+
+function currentHistory() { return DEMO.active ? DEMO.history : HISTORY.entries; }
+
+async function loadHistory() {
+  if (!DEMO.active) {
+    try { const data = await api("/agent/history"); HISTORY.entries = data.history || []; }
+    catch (e) { HISTORY.entries = []; }
+  }
+  renderHistoryList();
+}
+
+function fmtHistoryDate(iso) {
+  try {
+    return new Date(iso).toLocaleString([], {
+      weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+  } catch { return iso || ""; }
+}
+
+function renderHistoryList() {
+  const list = el("history-list");
+  if (!list) return;
+  let rows = (currentHistory() || []).slice();
+  const q = HISTORY.search.trim().toLowerCase();
+  if (q) rows = rows.filter((r) => String(r.goal || "").toLowerCase().includes(q));
+  rows.sort((a, b) => {
+    const da = new Date(a.created_at || 0), db_ = new Date(b.created_at || 0);
+    return HISTORY.sortNewest ? db_ - da : da - db_;
+  });
+  if (!rows.length) {
+    list.innerHTML = `<div class="empty">${q ? "No tasks match your search."
+      : "No tasks yet. Run Kairos on a goal and it'll show up here."}</div>`;
+    return;
+  }
+  list.innerHTML = rows.map((r) => {
+    const n = r.block_count != null ? r.block_count : (r.blocks || []).length;
+    return `<div class="hist-row" data-id="${esc(r.id)}" role="button" tabindex="0" aria-label="Open task: ${esc(r.goal || "untitled goal")}">
+        <div class="hist-main">
+          <div class="hist-goal">${esc(r.goal || "(untitled goal)")}</div>
+          <div class="hist-meta">${esc(fmtHistoryDate(r.created_at))}</div>
+        </div>
+        <span class="hist-count">${n} block${n === 1 ? "" : "s"}</span>
+        <button class="hist-del" data-del="${esc(r.id)}" title="Remove from history" aria-label="Remove this task from history">✕</button>
+      </div>`;
+  }).join("");
+}
+
+// Delegated: open a task, or delete its history row (× — calendar untouched).
+el("history-list").addEventListener("click", async (e) => {
+  const del = e.target.closest(".hist-del");
+  if (del) {
+    e.stopPropagation();
+    const id = del.getAttribute("data-del");
+    if (!(await confirmAction({
+      title: "Remove from history?",
+      message: "Removes this task from your history list only — your calendar blocks stay.",
+      yes: "Yes, remove",
+    }))) return;
+    await deleteHistoryEntry(id);
+    return;
+  }
+  const row = e.target.closest(".hist-row");
+  if (row) openTaskDetail(row.getAttribute("data-id"));
+});
+el("history-list").addEventListener("keydown", (e) => {
+  const row = e.target.closest && e.target.closest(".hist-row");
+  if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openTaskDetail(row.getAttribute("data-id")); }
+});
+
+async function deleteHistoryEntry(id) {
+  if (DEMO.active) {
+    DEMO.history = DEMO.history.filter((r) => String(r.id) !== String(id));
+    toast("Removed from history."); renderHistoryList(); return;
+  }
+  try {
+    await api(`/agent/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+    HISTORY.entries = HISTORY.entries.filter((r) => String(r.id) !== String(id));
+    toast("Removed from history — your calendar blocks stay.");
+    renderHistoryList();
+  } catch (e) { toast(e.message, true); }
+}
+
+el("history-search").addEventListener("input", (e) => { HISTORY.search = e.target.value; renderHistoryList(); });
+el("history-sort").onclick = () => {
+  HISTORY.sortNewest = !HISTORY.sortNewest;
+  el("history-sort").textContent = HISTORY.sortNewest ? "Newest first" : "Oldest first";
+  renderHistoryList();
+};
+el("history-clear").onclick = async () => {
+  if (!currentHistory().length) { toast("History is already empty."); return; }
+  if (!(await confirmAction({
+    title: "Clear task history?",
+    message: "Removes every task from your history list — your calendar blocks stay.",
+    yes: "Yes, clear all",
+  }))) return;
+  if (DEMO.active) {
+    DEMO.history = []; toast("Task history cleared."); renderHistoryList(); return;
+  }
+  try {
+    await api("/agent/history", { method: "DELETE" });
+    HISTORY.entries = [];
+    toast("Task history cleared — your calendar blocks stay.");
+    renderHistoryList();
+  } catch (e) { toast(e.message, true); }
+};
+
+// ----- Task detail (one task's focus blocks) -----
+function openTaskDetail(id) {
+  const src = (currentHistory() || []).find((r) => String(r.id) === String(id));
+  if (!src) { toast("That task is no longer in your history.", true); showView("history"); return; }
+  // Work on a clone so display-level removals don't mutate the cached record.
+  _detailEntry = {
+    id: src.id, goal: src.goal, deadline: src.deadline, created_at: src.created_at,
+    blocks: (src.blocks || []).map((b) => ({ ...b })),
+  };
+  showView("detail");
+  renderDetail();
+}
+
+function renderDetail() {
+  if (!_detailEntry) return;
+  el("detail-title").textContent = _detailEntry.goal || "Task";
+  const n = _detailEntry.blocks.length;
+  const dl = _detailEntry.deadline
+    ? `<span class="dm-deadline">Deadline: ${esc(fmtHistoryDate(_detailEntry.deadline))}</span>` : "";
+  el("detail-meta").innerHTML = `<div class="detail-meta-row">
+      <span class="goal-pill">🎯 ${esc(_detailEntry.goal || "(untitled goal)")}</span>
+      <span class="goal-count">${n} focus block${n === 1 ? "" : "s"}</span>${dl}
+    </div>
+    <div class="hist-meta" style="margin-top:8px">Created ${esc(fmtHistoryDate(_detailEntry.created_at))}</div>`;
+  renderDetailBlocks();
+  el("detail-footer").hidden = !n;
+}
+
+function renderDetailBlocks() {
+  const card = el("detail-timeline");
+  const blocks = _detailEntry.blocks || [];
+  let html = `<div class="tl-head"><p class="section-title" style="margin:0">Focus blocks</p>
+      <div class="legend"><span><span class="sw k"></span>Kairos block</span></div></div>`;
+  if (!blocks.length) {
+    html += `<div class="empty">No focus blocks remain for this task.</div>`;
+    card.innerHTML = html; card.hidden = false; return;
+  }
+  const groups = {};
+  blocks.forEach((b) => { const key = new Date(b.start).toDateString(); (groups[key] = groups[key] || []).push(b); });
+  Object.keys(groups).sort((a, b) => new Date(a) - new Date(b)).forEach((key) => {
+    const day = groups[key].sort((a, b) => new Date(a.start) - new Date(b.start));
+    html += `<div class="day-group"><div class="day-label">${fmtDay(new Date(key))}</div>`;
+    day.forEach((b) => {
+      const goal = b.goal || _detailEntry.goal || "";
+      let titleText = cleanBlockTitle(b.title, goal);
+      const chunk = parseChunk(titleText); if (chunk) titleText = chunk.base;
+      const time = `${fmtTime(new Date(b.start))}<br>${fmtTime(new Date(b.end))}`;
+      html += `<div class="ev kairos" data-id="${esc(b.event_id)}">
+          <div class="time">${time}</div>
+          <div><div class="title">${esc(titleText)}</div></div>
+          <div class="ev-actions">
+            <span class="badge">KAIROS</span>
+            <button class="ev-dismiss" data-dismiss="${esc(b.event_id)}" title="Remove this focus block" aria-label="Remove this Kairos block">✕</button>
+          </div>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+  card.innerHTML = html; card.hidden = false;
+}
+
+// Keep the in-memory demo history record in sync with the detail working copy.
+function syncDemoEntry() {
+  if (!DEMO.active || !_detailEntry) return;
+  const src = DEMO.history.find((r) => String(r.id) === String(_detailEntry.id));
+  if (src) { src.blocks = _detailEntry.blocks.map((b) => ({ ...b })); src.block_count = src.blocks.length; }
+}
+
+// Per-block delete on the detail page (delegated). Real → marked-only delete via
+// /agent/undo-event (server re-verifies the clutch marker); demo → in-memory.
+el("detail-timeline").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".ev-dismiss");
+  if (!btn || !_detailEntry) return;
+  const id = btn.getAttribute("data-dismiss");
+  if (!id) return;
+  if (!(await confirmAction({
+    title: "Remove this focus block?",
+    message: "This removes the Kairos focus block from your calendar. Your own events are never touched.",
+    yes: "Yes, remove",
+  }))) return;
+  if (DEMO.active) {
+    _detailEntry.blocks = _detailEntry.blocks.filter((b) => String(b.event_id) !== String(id));
+    syncDemoEntry();
+    DEMO.timeline = (DEMO.timeline || []).filter((ev) => String(ev.id) !== String(id));
+    toast("Block removed"); renderDetail(); return;
+  }
+  btn.disabled = true; btn.classList.add("busy");
+  try {
+    const r = await api(`/agent/undo-event/${encodeURIComponent(id)}`, { method: "POST" });
+    toast(r.already_gone ? "Block already removed" : "Block removed");
+    _detailEntry.blocks = _detailEntry.blocks.filter((b) => String(b.event_id) !== String(id));
+    renderDetail();
+  } catch (err) { btn.classList.remove("busy"); btn.disabled = false; toast(err.message, true); }
+});
+
+// "Undo all" on the detail page — scoped to THIS task's blocks (marked-only).
+el("detail-undo-all").onclick = async () => {
+  if (!_detailEntry) return;
+  if (!(await confirmAction({
+    title: "Undo all blocks for this task?",
+    message: "Removes all of this task's focus blocks from your calendar. Your own events are never touched.",
+    yes: "Yes, remove all",
+  }))) return;
+  const btn = el("detail-undo-all");
+  btn.disabled = true;
+  if (DEMO.active) {
+    _detailEntry.blocks = []; syncDemoEntry();
+    toast("All blocks removed"); btn.disabled = false; renderDetail(); return;
+  }
+  try {
+    const r = await api(`/agent/history/${encodeURIComponent(_detailEntry.id)}/undo-all`, { method: "POST" });
+    const n = r.events_deleted ?? 0;
+    toast(`Removed ${n} block${n === 1 ? "" : "s"} — your own events are untouched.`);
+    _detailEntry.blocks = [];
+    renderDetail();
+  } catch (e) { toast(e.message, true); }
+  finally { btn.disabled = false; }
+};
+
+// Build a demo history entry from a completed demo run result (in-memory only).
+function demoHistoryEntry(result) {
+  const blocks = (result.executed_actions || [])
+    .filter((a) => a.name === "create_calendar_event")
+    .map((a) => {
+      const r = a.result || {}, ar = a.args || {};
+      return { event_id: r.event_id, title: r.title || ar.title, goal: r.goal || result.goal,
+               start: r.start || ar.start, end: r.end || ar.end };
+    })
+    .filter((b) => b.event_id);
+  return { id: "demo-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7),
+    goal: result.goal, deadline: result.deadline, blocks, block_count: blocks.length,
+    created_at: new Date().toISOString() };
+}
 
 // ---------- boot ----------
 applyTheme(resolveTheme(), false); // sync toggle icon to the pre-painted theme (no cookie write)

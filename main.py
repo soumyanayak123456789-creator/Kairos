@@ -120,6 +120,7 @@ USERS = "users"
 TASKS = "tasks"            # subcollection under users/{sub}
 ACTION_LOG = "action_log"  # subcollection under users/{sub}: undo + receipts
 DRAFTS = "drafts"          # subcollection under users/{sub}: Lane B rescue drafts
+TASK_HISTORY = "task_history"  # subcollection under users/{sub}: completed goal runs
 
 # Marker stamped on agent-created calendar events (extendedProperties.private)
 # so they're distinguishable from the user's own events for undo + the UI.
@@ -1114,6 +1115,72 @@ def log_action(sub, action, args, result, undo) -> str:
     return ref.id
 
 
+# --- Task History: per-user record of completed goal runs --------------------
+# Additive layer over the agent. Recording happens AFTER a run finishes (never
+# inside the agent loop) and is best-effort, so it cannot affect scheduling, the
+# calendar writes, the clutch marker, or the run result.
+
+
+def _blocks_from_actions(executed_actions: list[dict]) -> list[dict]:
+    """Pull the focus blocks a run booked (for the Task History record/detail)."""
+    blocks = []
+    for rec in executed_actions or []:
+        if rec.get("name") != "create_calendar_event":
+            continue
+        r = rec.get("result") or {}
+        if not r.get("event_id"):
+            continue
+        blocks.append({
+            "event_id": r.get("event_id"),
+            "title": r.get("title"),
+            "goal": r.get("goal"),
+            "start": r.get("start"),
+            "end": r.get("end"),
+            "htmlLink": r.get("htmlLink"),
+        })
+    return blocks
+
+
+def record_task_history(sub: str, goal: str | None, deadline: str | None,
+                        executed_actions: list[dict]) -> str | None:
+    """Persist one completed goal run under users/{sub}/task_history.
+
+    Best-effort + additive: only runs that carry an explicit goal are recorded
+    (no-goal schedule reviews are skipped), and any failure is logged and
+    swallowed so it can never break the agent run or the response.
+    """
+    if not goal:
+        return None
+    blocks = _blocks_from_actions(executed_actions)
+    try:
+        ref = db().collection(USERS).document(sub).collection(TASK_HISTORY).document()
+        ref.set({
+            "goal": goal,
+            "deadline": deadline,
+            "blocks": blocks,
+            "block_count": len(blocks),
+            "created_at": firestore.SERVER_TIMESTAMP,
+        })
+        return ref.id
+    except Exception as e:  # noqa: BLE001 — history is additive; never break a run
+        logger.warning("record_task_history failed: %s", e)
+        return None
+
+
+def _history_view(doc_id: str, rec: dict) -> dict:
+    """Shape a stored history entry for API responses (timestamps -> ISO)."""
+    created = rec.get("created_at")
+    blocks = rec.get("blocks") or []
+    return {
+        "id": doc_id,
+        "goal": rec.get("goal"),
+        "deadline": rec.get("deadline"),
+        "blocks": blocks,
+        "block_count": rec.get("block_count", len(blocks)),
+        "created_at": created.isoformat() if isinstance(created, datetime) else None,
+    }
+
+
 def _safe_parse_local(dt_str, tz: ZoneInfo) -> datetime | None:
     """Parse an ISO datetime into tz; return None if absent/unparseable."""
     if not dt_str:
@@ -1659,6 +1726,10 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
     else:
         final_text = f"Step cap ({AGENT_STEP_CAP}) reached before the model finished."
 
+    # Record this completed goal run to Task History (additive, best-effort —
+    # AFTER the loop, so it never affects scheduling, the writes, or the result).
+    history_id = record_task_history(sub, goal, deadline, executed_actions)
+
     return {
         "goal": goal,
         "deadline": deadline,
@@ -1675,6 +1746,7 @@ def run_agent(sub: str, data: dict, goal: str | None, deadline: str | None, hour
         "drafts": drafts,  # Lane B rescue messages, proposed (never sent)
         "notifications": notifications,
         "final_text": final_text,
+        "history_id": history_id,  # Task History record id (additive; may be None)
     }
 
 
@@ -2506,6 +2578,126 @@ def agent_undo_event(event_id: str, request: Request):
             actions_marked += 1
 
     return {"deleted": True, "event_id": event_id, "actions_marked_undone": actions_marked}
+
+
+# --- Task History: list / detail / delete / clear / scoped undo-all ----------
+# Listing + deletion here touch ONLY the history record (the user's calendar is
+# never modified by delete/clear). The detail-page "undo all" reuses the SAME
+# marked-only guarantee as undo-all/undo-event; per-block delete on the detail
+# page reuses /agent/undo-event/{event_id} directly.
+
+
+@app.get("/agent/history")
+def agent_history(request: Request, limit: int = 100):
+    """List the user's completed goal runs (newest first). Read-only."""
+    sub, _ = _require_user(request)
+    docs = (
+        db().collection(USERS).document(sub).collection(TASK_HISTORY)
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+        .limit(limit)
+        .stream()
+    )
+    return {"history": [_history_view(d.id, d.to_dict()) for d in docs]}
+
+
+@app.get("/agent/history/{entry_id}")
+def agent_history_get(entry_id: str, request: Request):
+    """Fetch one history entry (its booked focus blocks) for the detail view."""
+    sub, _ = _require_user(request)
+    snap = db().collection(USERS).document(sub).collection(TASK_HISTORY).document(entry_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Task not found in history.")
+    return _history_view(snap.id, snap.to_dict())
+
+
+@app.delete("/agent/history/{entry_id}")
+def agent_history_delete(entry_id: str, request: Request):
+    """Remove ONE entry from history. The calendar blocks are NOT touched."""
+    sub, _ = _require_user(request)
+    ref = db().collection(USERS).document(sub).collection(TASK_HISTORY).document(entry_id)
+    if not ref.get().exists:
+        raise HTTPException(status_code=404, detail="Task not found in history.")
+    ref.delete()
+    return {"deleted": True, "id": entry_id, "calendar_touched": False}
+
+
+@app.delete("/agent/history")
+def agent_history_clear(request: Request):
+    """Clear ALL history entries. The calendar blocks are NOT touched."""
+    sub, _ = _require_user(request)
+    coll = db().collection(USERS).document(sub).collection(TASK_HISTORY)
+    deleted = 0
+    batch = db().batch()
+    pending = 0
+    for d in coll.stream():
+        batch.delete(d.reference)
+        deleted += 1
+        pending += 1
+        if pending >= 400:  # stay under Firestore's 500-op batch limit
+            batch.commit()
+            batch = db().batch()
+            pending = 0
+    if pending:
+        batch.commit()
+    return {"deleted": deleted, "calendar_touched": False}
+
+
+@app.post("/agent/history/{entry_id}/undo-all")
+def agent_history_undo_all(entry_id: str, request: Request):
+    """Delete THIS task's focus blocks from the calendar (history record kept).
+
+    SAFETY: reuses the exact marked-only guarantee as undo-all/undo-event — each
+    block is fetched and its clutch marker re-verified before deletion, so the
+    user's own (unmarked) events are never deleted. Idempotent on already-gone
+    blocks. Does NOT remove the history entry itself.
+    """
+    sub, data = _require_user(request)
+    snap = db().collection(USERS).document(sub).collection(TASK_HISTORY).document(entry_id).get()
+    if not snap.exists:
+        raise HTTPException(status_code=404, detail="Task not found in history.")
+    blocks = snap.to_dict().get("blocks") or []
+
+    creds = _ensure_valid(sub, _credentials_from_doc(data))
+    session = AuthorizedSession(creds)
+
+    events_deleted = already_gone = events_skipped_unmarked = 0
+    for b in blocks:
+        event_id = b.get("event_id")
+        if not event_id:
+            continue
+        try:
+            ev = _cal_get(session, event_id)
+        except HTTPException as e:
+            if e.status_code == 502 and "404" in str(e.detail):
+                already_gone += 1
+                continue
+            raise
+        private = (ev.get("extendedProperties", {}) or {}).get("private", {}) or {}
+        if private.get(CLUTCH_MARKER) != "1":
+            events_skipped_unmarked += 1  # never delete the user's own event
+            continue
+        _cal_delete(session, event_id)
+        events_deleted += 1
+
+    # Keep the action log consistent: mark this task's create records undone.
+    block_ids = {b.get("event_id") for b in blocks if b.get("event_id")}
+    actions_marked = 0
+    if block_ids:
+        for d in db().collection(USERS).document(sub).collection(ACTION_LOG).stream():
+            rec = d.to_dict()
+            if rec.get("undone"):
+                continue
+            undo = rec.get("undo") or {}
+            if undo.get("type") == "delete_event" and undo.get("event_id") in block_ids:
+                d.reference.set({"undone": True, "undone_at": firestore.SERVER_TIMESTAMP}, merge=True)
+                actions_marked += 1
+
+    return {
+        "events_deleted": events_deleted,
+        "already_gone": already_gone,
+        "events_skipped_unmarked": events_skipped_unmarked,
+        "actions_marked_undone": actions_marked,
+    }
 
 
 # --- Lane B drafts: list / confirm / edit / dismiss (confirm-first, no send) --
