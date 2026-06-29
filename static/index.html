@@ -1329,7 +1329,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !demoMod
 // ---------- DEMO / GUEST MODE (real agent reasoning on a seeded calendar) ----------
 // A self-contained sandbox: no Google login, no Firestore, no real calendar writes.
 // Runs against /agent/demo/run, which reuses the live agent reasoning server-side.
-const DEMO = { active: false, timeline: [], drafts: [], origin: null, history: [] };
+const DEMO = { active: false, timeline: [], drafts: [], origin: null, history: [], viewer: null };
 
 function enterDemo() {
   DEMO.active = true;
@@ -1360,7 +1360,7 @@ function enterDemo() {
 
 function exitDemo() {
   DEMO.active = false;
-  DEMO.timeline = []; DEMO.drafts = []; DEMO.origin = null; DEMO.history = [];
+  DEMO.timeline = []; DEMO.drafts = []; DEMO.origin = null; DEMO.history = []; DEMO.viewer = null;
   document.documentElement.removeAttribute("data-demo");
   el("demo-banner").hidden = true;
   el("hero-demo-note").hidden = true;
@@ -1472,6 +1472,10 @@ async function runKairos() {
     if (DEMO.active) {
       // Demo: same agent reasoning server-side, seeded calendar, no real writes.
       const body = { goal, deadline: deadline || null, hours };
+      // Carry the viewer's location so the run's seed matches the preview's nearby
+      // venues (server falls back to the fixed sample if it's missing/unavailable).
+      if (DEMO.viewer == null) DEMO.viewer = await getUserLocation();
+      if (DEMO.viewer) { body.viewer_lat = DEMO.viewer.lat; body.viewer_lng = DEMO.viewer.lng; }
       if (GOAL_LOC) {
         body.loc_lat = GOAL_LOC.lat;
         body.loc_lng = GOAL_LOC.lng;
@@ -2027,7 +2031,13 @@ async function loadPreview() {
   if (DEMO.active) {
     if (!DEMO.timeline.length) {
       try {
-        const data = await api("/agent/demo/seed");
+        // Best-effort: share the viewer's location so the seed shows real venues
+        // NEAR them with realistic commutes. Denied/unavailable → server falls
+        // back to the fixed Bhubaneswar sample (demo always populates).
+        if (DEMO.viewer == null) DEMO.viewer = await getUserLocation();
+        let url = "/agent/demo/seed";
+        if (DEMO.viewer) url += `?lat=${encodeURIComponent(DEMO.viewer.lat)}&lng=${encodeURIComponent(DEMO.viewer.lng)}`;
+        const data = await api(url);
         DEMO.timeline = data.timeline || [];
         DEMO.origin = data.origin || null;
       } catch (_) { /* seed unavailable — demo still works via a run */ }

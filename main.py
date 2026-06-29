@@ -1979,37 +1979,49 @@ def agent_run(
 # Fixed realistic student week (classes/labs), so the demo is consistent. Times
 # are local working-tz; mornings, mid-afternoon gaps, evenings and weekends stay
 # partly free so a multi-hour goal has room to schedule.
+# Professional, varied sample week (meetings/calls/reviews — never student events).
+# "Client Call" is intentionally remote (no location below) so the week has a
+# realistic mix of in-person + remote events; the agent's focus blocks add later.
 _DEMO_WEEK = {
-    0: [("Data Structures Lecture", 10, 0, 11, 0), ("Operating Systems Lecture", 14, 0, 15, 30)],
-    1: [("Physics Lab", 11, 0, 13, 0), ("Linear Algebra Tutorial", 15, 0, 16, 0)],
-    2: [("Data Structures Lecture", 10, 0, 11, 0), ("Operating Systems Lecture", 14, 0, 15, 30)],
-    3: [("Physics Lab", 11, 0, 13, 0), ("Linear Algebra Tutorial", 15, 0, 16, 0)],
-    4: [("Data Structures Lecture", 10, 0, 11, 0), ("Career Workshop", 16, 0, 17, 0)],
-    5: [("Football Practice", 17, 0, 18, 30)],
-    6: [("Group Project Sync", 16, 0, 17, 0)],
+    0: [("Team Sync", 10, 0, 10, 30), ("Project Review", 15, 0, 16, 0)],
+    1: [("Client Call", 11, 0, 12, 0), ("1:1 Meeting", 16, 0, 16, 30)],
+    2: [("Planning Session", 10, 0, 11, 0), ("Design Review", 14, 0, 15, 0)],
+    3: [("Client Call", 11, 30, 12, 30), ("Team Sync", 16, 0, 16, 30)],
+    4: [("Sprint Review", 10, 0, 11, 0), ("Stakeholder Meeting", 15, 0, 16, 0)],
+    5: [("Networking Coffee", 11, 0, 12, 0)],
+    6: [("Weekly Planning", 17, 0, 18, 0)],
 }
 
-# Real-coordinate locations (Bhubaneswar) for demo seed events so the commute
-# feature has something to route to. Focus blocks (created by the agent) get NO
-# location. Coords are real places so the Routes API returns sane minute-level times.
+# Real-coordinate FALLBACK locations (Bhubaneswar) for demo seed events so the
+# commute feature has something to route to when nearby-Places lookup isn't
+# available. Focus blocks (created by the agent) get NO location. The KEYS here
+# also define WHICH seed events are "located" (Client Call stays remote/unlocated).
+# When the viewer shares their location, these are replaced by real nearby venues.
 _DEMO_LOCATIONS = {
-    "Data Structures Lecture":   {"address": "KIIT University, Campus 7, Bhubaneswar", "lat": 20.3539, "lng": 85.8198},
-    "Operating Systems Lecture": {"address": "KIIT University, Campus 7, Bhubaneswar", "lat": 20.3539, "lng": 85.8198},
-    "Physics Lab":               {"address": "KIIT Science Block, Bhubaneswar",        "lat": 20.3551, "lng": 85.8175},
-    "Linear Algebra Tutorial":   {"address": "KIIT Central Library, Bhubaneswar",      "lat": 20.3525, "lng": 85.8157},
-    "Career Workshop":           {"address": "City Centre, Master Canteen, Bhubaneswar", "lat": 20.2724, "lng": 85.8425},
-    "Football Practice":         {"address": "Kalinga Stadium, Bhubaneswar",           "lat": 20.2896, "lng": 85.8203},
-    "Group Project Sync":        {"address": "State Library, Bhubaneswar",             "lat": 20.2762, "lng": 85.8389},
+    "Team Sync":           {"address": "Hotel Trident, Nayapalli, Bhubaneswar",   "lat": 20.2935, "lng": 85.8190},
+    "Project Review":      {"address": "Fortune Park Sishmo, Bhubaneswar",        "lat": 20.2700, "lng": 85.8400},
+    "1:1 Meeting":         {"address": "Cafe Coffee Day, Saheed Nagar, Bhubaneswar", "lat": 20.2870, "lng": 85.8430},
+    "Planning Session":    {"address": "Mayfair Convention, Bhubaneswar",         "lat": 20.2520, "lng": 85.8270},
+    "Design Review":       {"address": "Esplanade One, Rasulgarh, Bhubaneswar",   "lat": 20.2960, "lng": 85.8540},
+    "Sprint Review":       {"address": "Infocity, Patia, Bhubaneswar",            "lat": 20.3490, "lng": 85.8160},
+    "Stakeholder Meeting": {"address": "Crown Hotel, Nayapalli, Bhubaneswar",     "lat": 20.2900, "lng": 85.8160},
+    "Networking Coffee":   {"address": "Starbucks, Esplanade One, Bhubaneswar",   "lat": 20.2961, "lng": 85.8541},
+    "Weekly Planning":     {"address": "Sai International Centre, Bhubaneswar",    "lat": 20.3100, "lng": 85.8200},
 }
 
-# Fixed demo "home" origin in Bhubaneswar. In demo mode the commute is computed
-# from THIS point (not the viewer's real GPS) so travel times are realistic and
-# consistent regardless of where the judge actually is.
+# Fixed demo "home" origin in Bhubaneswar — used as the commute origin ONLY in the
+# FALLBACK case (no viewer location). When the viewer shares their location, the
+# commute origin becomes the viewer's actual coords instead (see _demo_build_seed).
 _DEMO_ORIGIN = {"address": "Jaydev Vihar (home), Bhubaneswar", "lat": 20.2961, "lng": 85.8245}
 
 
-def _demo_seed_events(now_local: datetime, tz: ZoneInfo) -> list[dict]:
-    """Google-Calendar-shaped seed events for the next 7 days (fixed weekly pattern)."""
+def _demo_seed_events(now_local: datetime, tz: ZoneInfo,
+                      locations: dict | None = None) -> list[dict]:
+    """Google-Calendar-shaped seed events for the next 7 days (fixed weekly pattern).
+
+    `locations` optionally overrides the per-summary location map (e.g. real venues
+    near the viewer). When omitted, the hardcoded Bhubaneswar fallback is used."""
+    loc_map = locations or _DEMO_LOCATIONS
     events: list[dict] = []
     base = now_local.date()
     n = 0
@@ -2026,12 +2038,83 @@ def _demo_seed_events(now_local: datetime, tz: ZoneInfo) -> list[dict]:
                 "end": {"dateTime": e.isoformat()},
                 "status": "confirmed",
             }
-            loc = _DEMO_LOCATIONS.get(summary)
+            loc = loc_map.get(summary)
             if loc:
                 ev["location"] = loc["address"]
                 ev["geo"] = {"lat": loc["lat"], "lng": loc["lng"]}
             events.append(ev)
     return events
+
+
+# --- Demo: real nearby venues (Places API, server-side key) -------------------
+PLACES_NEARBY_ENDPOINT = "https://places.googleapis.com/v1/places:searchNearby"
+
+
+def _places_nearby(lat: float, lng: float) -> list[dict]:
+    """Best-effort: real professional-meeting venues near (lat, lng) via the Places
+    API (New), using the SERVER-SIDE MAPS_API_KEY only. Returns a list of
+    {name, lat, lng}, or [] on ANY failure (no key, HTTP error, empty, exception)
+    so callers can fall back cleanly. The key is sent only in the request header."""
+    if not MAPS_API_KEY:
+        return []
+    try:
+        resp = requests.post(
+            PLACES_NEARBY_ENDPOINT,
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": MAPS_API_KEY,           # secret — header only, never logged
+                "X-Goog-FieldMask": "places.displayName,places.location",
+            },
+            json={
+                "includedTypes": ["cafe", "restaurant"],  # sensible professional meet-up spots
+                "maxResultCount": 12,
+                "locationRestriction": {
+                    "circle": {"center": {"latitude": lat, "longitude": lng}, "radius": 5000.0}
+                },
+            },
+            timeout=8,
+        )
+        if resp.status_code != 200:
+            return []
+        out, seen = [], set()
+        for p in resp.json().get("places", []) or []:
+            name = ((p.get("displayName") or {}).get("text") or "").strip()
+            loc = p.get("location") or {}
+            la, ln = loc.get("latitude"), loc.get("longitude")
+            if not name or la is None or ln is None or name in seen:
+                continue
+            seen.add(name)
+            out.append({"name": name, "lat": la, "lng": ln})
+        return out
+    except Exception:
+        return []
+
+
+def _assign_demo_locations(venues: list[dict]) -> dict:
+    """Map each LOCATED demo summary (the keys of _DEMO_LOCATIONS) to a real nearby
+    venue, round-robin. Keeps the same 'which events are located' shape as the
+    fallback (so Client Call stays remote)."""
+    out = {}
+    for i, summary in enumerate(_DEMO_LOCATIONS.keys()):
+        v = venues[i % len(venues)]
+        out[summary] = {"address": v["name"], "lat": v["lat"], "lng": v["lng"]}
+    return out
+
+
+def _demo_build_seed(now_local: datetime, tz: ZoneInfo,
+                     viewer_lat: float | None = None,
+                     viewer_lng: float | None = None) -> tuple[list[dict], dict]:
+    """Build the demo seed + commute origin. When the viewer shares coords AND
+    Places returns nearby venues, locate the seed at those real venues with the
+    origin = the viewer's location. Otherwise FALL BACK to the hardcoded
+    Bhubaneswar seed + fixed origin. Never raises — the demo always populates."""
+    locations, origin = None, _DEMO_ORIGIN
+    if viewer_lat is not None and viewer_lng is not None:
+        venues = _places_nearby(viewer_lat, viewer_lng)
+        if venues:
+            locations = _assign_demo_locations(venues)
+            origin = {"address": "Your location", "lat": viewer_lat, "lng": viewer_lng}
+    return _demo_seed_events(now_local, tz, locations=locations), origin
 
 
 def _demo_parse(iso: str) -> datetime:
@@ -2202,10 +2285,13 @@ def _demo_execute(state: dict, client, name, args, prefs, run_deadline=None, run
 
 
 def run_agent_demo(goal: str | None, deadline: str | None, hours: int,
-                   location: dict | None = None, origin: dict | None = None) -> dict:
+                   location: dict | None = None, origin: dict | None = None,
+                   viewer_lat: float | None = None, viewer_lng: float | None = None) -> dict:
     """Parallel agent loop for demo mode. Same orchestration + the SAME reasoning
     primitives as run_agent, but reads the seeded calendar and writes in-memory.
-    `location`/`origin` are optional display-only metadata (never sent to Gemini)."""
+    `location`/`origin` are optional display-only metadata (never sent to Gemini).
+    `viewer_lat/lng` (optional) locate the seed at real nearby venues; on any
+    failure the seed falls back to the fixed Bhubaneswar sample (demo never breaks)."""
     client = _gemini_client()
     config = types.GenerateContentConfig(
         tools=[types.Tool(function_declarations=FUNCTION_DECLARATIONS)],
@@ -2215,7 +2301,8 @@ def run_agent_demo(goal: str | None, deadline: str | None, hours: int,
     )
     prefs = get_prefs({})  # module defaults (no user doc)
     tz = ZoneInfo(prefs["work_tz"])
-    session = DemoSession(_demo_seed_events(datetime.now(tz), tz))
+    seed_events, demo_origin = _demo_build_seed(datetime.now(tz), tz, viewer_lat, viewer_lng)
+    session = DemoSession(seed_events)
     state = {"session": session, "tasks": []}
 
     # 1) Perceive (live read helpers against the demo session; tasks start empty).
@@ -2401,7 +2488,7 @@ def run_agent_demo(goal: str | None, deadline: str | None, hours: int,
         "notifications": notifications,
         "final_text": final_text,
         "timeline": timeline,
-        "origin": _DEMO_ORIGIN,   # fixed Bhubaneswar origin for commute calc
+        "origin": demo_origin,   # viewer location when shared, else fixed Bhubaneswar
     }
 
 
@@ -2414,6 +2501,8 @@ class DemoRunRequest(BaseModel):
     loc_label: str | None = None
     origin_lat: float | None = None
     origin_lng: float | None = None
+    viewer_lat: float | None = None   # demo only: viewer's coords for nearby-venue seed
+    viewer_lng: float | None = None
 
 
 @app.post("/agent/demo/run")
@@ -2428,17 +2517,23 @@ def agent_demo_run(body: DemoRunRequest):
         raise HTTPException(status_code=400, detail="hours must be between 1 and 720.")
     location, origin = _location_from_params(
         body.loc_lat, body.loc_lng, body.loc_label, body.origin_lat, body.origin_lng)
-    return run_agent_demo(body.goal, body.deadline, body.hours, location=location, origin=origin)
+    return run_agent_demo(body.goal, body.deadline, body.hours, location=location, origin=origin,
+                          viewer_lat=body.viewer_lat, viewer_lng=body.viewer_lng)
 
 
 @app.get("/agent/demo/seed")
-def agent_demo_seed():
+def agent_demo_seed(lat: float | None = None, lng: float | None = None):
     """Return the seeded demo week WITHOUT running the agent, so the UI can show a
     populated sample calendar the instant a judge enters demo mode (then a run
-    ADDS Kairos blocks to it). Read-only; no Gemini, no writes, no OAuth."""
+    ADDS Kairos blocks to it). Read-only; no Gemini, no writes, no OAuth.
+
+    Optional `lat`/`lng` (the viewer's location) locate the seed at REAL nearby
+    venues with the commute origin = the viewer; on any failure it falls back to
+    the fixed Bhubaneswar sample so the preview always populates."""
     tz = ZoneInfo(WORK_TZ)
     now_local = datetime.now(tz)
-    session = DemoSession(_demo_seed_events(now_local, tz))
+    seed_events, demo_origin = _demo_build_seed(now_local, tz, lat, lng)
+    session = DemoSession(seed_events)
     tmin = datetime.now(timezone.utc).isoformat()
     tmax = (datetime.now(timezone.utc) + timedelta(hours=24 * 7)).isoformat()
     events = _list_events(session, tmin, tmax, include_location=True)
@@ -2448,7 +2543,7 @@ def agent_demo_seed():
         "demo": True,
         "now": now_local.isoformat(),
         "timezone": str(tz),
-        "origin": _DEMO_ORIGIN,   # fixed Bhubaneswar origin for commute calc
+        "origin": demo_origin,   # viewer location when shared, else fixed Bhubaneswar
         "timeline": events,
     }
 
