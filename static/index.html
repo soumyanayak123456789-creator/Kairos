@@ -2062,6 +2062,15 @@ function previewRowHTML(ev) {
     </div>`;
 }
 // Render the next 2–3 upcoming events into the main-page preview card.
+// Show an on-theme loading row in the preview area while the demo sample calendar
+// is being fetched/built. Reuses the existing .undo-status + .mini-spin styling so
+// it matches dark/light + the accent. renderPreview() replaces this on completion.
+function showPreviewLoading() {
+  const card = el("preview-card"), list = el("preview-list");
+  if (!card || !list) return;
+  list.innerHTML = `<div class="undo-status"><span class="mini-spin"></span> Loading your sample calendar…</div>`;
+  card.hidden = false;
+}
 function renderPreview(events) {
   const card = el("preview-card"), list = el("preview-list");
   if (!card || !list) return;
@@ -2082,6 +2091,10 @@ function renderPreview(events) {
 async function loadPreview() {
   if (DEMO.active) {
     if (!DEMO.timeline.length) {
+      // The seed wait spans geolocation permission → backend → Places → seed
+      // build. Show an on-theme loader the whole time so it never looks stalled;
+      // it's cleared by renderPreview() below (on success OR fallback).
+      showPreviewLoading();
       try {
         // Best-effort: share the viewer's location so the seed shows real venues
         // NEAR them with realistic commutes. Denied/unavailable → server falls
